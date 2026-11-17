@@ -1,0 +1,2404 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NEMA Studio Pro — Control CNC, Dibujo Vectorial y Laser 5W</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="desktop-app">
+    <div class="desktop-shell">
+
+        <!-- ==================================================================
+             1. BARRA DE MENU SUPERIOR CLASICA (ESTILO INKSCAPE / ADOBE)
+             ================================================================== -->
+        <header class="desktop-menubar" id="desktop-menubar">
+            <div class="menubar-left">
+                <div class="app-brand" title="NEMA Studio Pro">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+                        <polyline points="2 17 12 22 22 17"></polyline>
+                        <polyline points="2 12 12 17 22 12"></polyline>
+                    </svg>
+                    <span class="app-title">NEMA Studio Pro</span>
+                </div>
+
+                <nav class="menubar-menus" aria-label="Menu principal">
+                    <!-- MENU ARCHIVO -->
+                    <div class="menu-root" data-menu="archivo">
+                        <button type="button" class="menu-trigger" onclick="alternarMenuSuperior('archivo')">Archivo</button>
+                        <div class="menu-dropdown">
+                            <button type="button" class="menu-item" onclick="cerrarMenusSuperiores(); abrirModal('modal-perfiles')">
+                                <span>Administrar Perfiles (perfiles/)...</span>
+                                <kbd>Ctrl+P</kbd>
+                            </button>
+                            <button type="button" class="menu-item" onclick="cerrarMenusSuperiores(); guardarPerfilActual('actualizar')">
+                                <span>Actualizar Perfil Actual</span>
+                                <kbd>Ctrl+S</kbd>
+                            </button>
+                            <div class="menu-sep"></div>
+                            <button type="button" class="menu-item" onclick="cerrarMenusSuperiores(); document.getElementById('file-import-profile').click()">
+                                <span>Importar Perfil (.json)...</span>
+                            </button>
+                            <a href="/api/export" class="menu-item" onclick="cerrarMenusSuperiores()">
+                                <span>Exportar Configuracion (.json)</span>
+                            </a>
+                            <div class="menu-sep"></div>
+                            <button type="button" class="menu-item" onclick="cerrarMenusSuperiores(); abrirModal('modal-importar-svg')">
+                                <span>Importar Vector SVG (Inkscape)...</span>
+                                <kbd>Ctrl+I</kbd>
+                            </button>
+                            <button type="button" class="menu-item" onclick="cerrarMenusSuperiores(); cambiarVista('drawing'); setTimeout(() => document.getElementById('input-img-file').click(), 60)">
+                                <span>Abrir Imagen para Mapeo OpenCV...</span>
+                                <kbd>Ctrl+O</kbd>
+                            </button>
+                            <button type="button" class="menu-item" onclick="cerrarMenusSuperiores(); descargarPlanoPNG()">
+                                <span>Exportar Plano Tecnico CAD (.png)</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- MENU EDITAR -->
+                    <div class="menu-root" data-menu="editar">
+                        <button type="button" class="menu-trigger" onclick="alternarMenuSuperior('editar')">Editar</button>
+                        <div class="menu-dropdown">
+                            <button type="button" class="menu-item" onclick="cerrarMenusSuperiores(); deshacerUltimoTrazo()">
+                                <span>Deshacer Ultimo Trazo</span>
+                                <kbd>Ctrl+Z</kbd>
+                            </button>
+                            <div class="menu-sep"></div>
+                            <button type="button" class="menu-item" onclick="cerrarMenusSuperiores(); duplicarSeleccion()">
+                                <span>Duplicar Seleccion</span>
+                                <kbd>Ctrl+D</kbd>
+                            </button>
+                            <button type="button" class="menu-item" onclick="cerrarMenusSuperiores(); rotarSeleccion90()">
+                                <span>Rotar Seleccion 90 deg</span>
+                            </button>
+                            <button type="button" class="menu-item" onclick="cerrarMenusSuperiores(); espejoSeleccion('h')">
+                                <span>Reflejar Horizontal</span>
+                            </button>
+                            <button type="button" class="menu-item" onclick="cerrarMenusSuperiores(); espejoSeleccion('v')">
+                                <span>Reflejar Vertical</span>
+                            </button>
+                            <button type="button" class="menu-item" onclick="cerrarMenusSuperiores(); eliminarSeleccion()">
+                                <span>Eliminar Seleccion</span>
+                                <kbd>Supr</kbd>
+                            </button>
+                            <div class="menu-sep"></div>
+                            <button type="button" class="menu-item" onclick="cerrarMenusSuperiores(); limpiarLienzoDibujo()">
+                                <span>Limpiar Lienzo de Dibujo</span>
+                            </button>
+                            <button type="button" class="menu-item" onclick="cerrarMenusSuperiores(); accionCalibrar('limpiar_rastro')">
+                                <span>Limpiar Rastro de Simulacion</span>
+                            </button>
+                            <div class="menu-sep"></div>
+                            <button type="button" class="menu-item danger" onclick="cerrarMenusSuperiores(); paroEmergencia()">
+                                <span>Paro de Emergencia Inmediato</span>
+                                <kbd>Esc</kbd>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- MENU VER -->
+                    <div class="menu-root" data-menu="ver">
+                        <button type="button" class="menu-trigger" onclick="alternarMenuSuperior('ver')">Ver</button>
+                        <div class="menu-dropdown">
+                            <button type="button" class="menu-item" onclick="cerrarMenusSuperiores(); cambiarVista('sim')">
+                                <span>Espacio 01: Control Manual y Simulacion</span>
+                                <kbd>F1</kbd>
+                            </button>
+                            <button type="button" class="menu-item" onclick="cerrarMenusSuperiores(); cambiarVista('drawing')">
+                                <span>Espacio 02: Estudio de Dibujo CNC</span>
+                                <kbd>F2</kbd>
+                            </button>
+                            <button type="button" class="menu-item" onclick="cerrarMenusSuperiores(); cambiarVista('blueprint')">
+                                <span>Espacio 03: Plano Tecnico (CAD)</span>
+                                <kbd>F3</kbd>
+                            </button>
+                            <div class="menu-sep"></div>
+                            <button type="button" class="menu-item" onclick="cerrarMenusSuperiores(); ajustarVistaAZona()">
+                                <span>Ajustar Vista a Zona Calibrada</span>
+                                <kbd>0</kbd>
+                            </button>
+                            <button type="button" class="menu-item" onclick="cerrarMenusSuperiores(); zoomTamanoReal()">
+                                <span>Zoom Tamano Real (1:1)</span>
+                                <kbd>1</kbd>
+                            </button>
+                            <button type="button" class="menu-item" onclick="cerrarMenusSuperiores(); zoomASeleccion()">
+                                <span>Zoom a Seleccion</span>
+                            </button>
+                            <button type="button" class="menu-item" onclick="cerrarMenusSuperiores(); zoomATodosLosTrazos()">
+                                <span>Zoom a Todos los Trazos</span>
+                            </button>
+                            <div class="menu-sep"></div>
+                            <button type="button" class="menu-item" onclick="cerrarMenusSuperiores(); alternarDockDerecho()">
+                                <span>Mostrar / Ocultar Inspector Derecho</span>
+                                <kbd>Tab</kbd>
+                            </button>
+                            <button type="button" class="menu-item" onclick="cerrarMenusSuperiores(); alternarTiraActuadores()">
+                                <span>Mostrar / Ocultar Actuadores en Vivo</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- MENU CONFIGURACION -->
+                    <div class="menu-root" data-menu="configuracion">
+                        <button type="button" class="menu-trigger" onclick="alternarMenuSuperior('configuracion')">Configuracion</button>
+                        <div class="menu-dropdown">
+                            <button type="button" class="menu-item" onclick="cerrarMenusSuperiores(); abrirModal('modal-conexion')">
+                                <span>Conexion Serial, Simulacion y Seguridad...</span>
+                            </button>
+                            <button type="button" class="menu-item" onclick="cerrarMenusSuperiores(); abrirModal('modal-driver-dip')">
+                                <span>Driver Stepper, Switches DIP (S1-S6) y ENA+...</span>
+                            </button>
+                            <button type="button" class="menu-item" onclick="cerrarMenusSuperiores(); abrirModal('modal-calibracion-ejes')">
+                                <span>Calibracion de Ejes (X, Y, Z), Espacio y Velocidad (Hz)...</span>
+                            </button>
+                            <button type="button" class="menu-item" onclick="cerrarMenusSuperiores(); abrirModal('modal-laser-config')">
+                                <span>Parametros Laser 5W y Cableado (VCC/GND/PWM)...</span>
+                            </button>
+                            <div class="menu-sep"></div>
+                            <button type="button" class="menu-item" onclick="cerrarMenusSuperiores(); abrirModal('modal-perfiles')">
+                                <span>Perfiles Guardados (perfiles/)...</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- MENU AYUDA -->
+                    <div class="menu-root" data-menu="ayuda">
+                        <button type="button" class="menu-trigger" onclick="alternarMenuSuperior('ayuda')">Ayuda</button>
+                        <div class="menu-dropdown">
+                            <button type="button" class="menu-item" onclick="cerrarMenusSuperiores(); abrirModal('modal-ayuda')">
+                                <span>Atajos de Teclado y Mouse...</span>
+                            </button>
+                            <button type="button" class="menu-item" onclick="cerrarMenusSuperiores(); abrirModal('modal-laser-config')">
+                                <span>Guia Cable 3 Entradas (2 Salidas GND)...</span>
+                            </button>
+                            <div class="menu-sep"></div>
+                            <button type="button" class="menu-item" onclick="cerrarMenusSuperiores(); abrirModal('modal-ayuda')">
+                                <span>Acerca de NEMA Studio Pro</span>
+                            </button>
+                        </div>
+                    </div>
+                </nav>
+            </div>
+
+            <!-- Selector de Workspace (Derecha de la Barra de Menu) -->
+            <div class="menubar-center">
+                <nav class="workspace-tabs" aria-label="Espacios de trabajo">
+                    <button type="button" class="ws-tab active" id="tab-btn-sim" onclick="cambiarVista('sim')">
+                        <span class="ws-num">01</span> Control Manual
+                    </button>
+                    <button type="button" class="ws-tab" id="tab-btn-drawing" onclick="cambiarVista('drawing')">
+                        <span class="ws-num">02</span> Estudio Dibujo CNC
+                    </button>
+                    <button type="button" class="ws-tab" id="tab-btn-blueprint" onclick="cambiarVista('blueprint')">
+                        <span class="ws-num">03</span> Plano CAD
+                    </button>
+                </nav>
+            </div>
+
+            <div class="menubar-right">
+                <button type="button" id="top-tool-mode-badge" class="top-tool-badge dibujo" onclick="alternarModoHerramientaRapido()" title="Modo de herramienta activo (clic para cambiar entre Dibujo Pluma y Laser 5W)">
+                    <span class="tool-mode-dot"></span>
+                    <span id="top-tool-mode-text">MODO: DIBUJO (PLUMA)</span>
+                </button>
+                <button type="button" id="status-pill" class="status-badge sim" onclick="abrirModal('modal-conexion')" title="Clic para abrir Configuracion de Conexion Serial y Simulacion">
+                    <span class="status-dot"></span>
+                    <span id="status-pill-text">Simulacion Virtual</span>
+                </button>
+                <button type="button" class="btn-desktop-estop" id="btn-estop" onclick="paroEmergencia()" title="Paro de Emergencia Inmediato (Esc)">
+                    PARAR (E-STOP)
+                </button>
+            </div>
+        </header>
+
+        <!-- ==================================================================
+             2. BARRA DE CONTROL CONTEXTUAL (ESTILO CONTROL BAR ADOBE / INKSCAPE)
+             ================================================================== -->
+        <section class="desktop-controlbar">
+            <div class="controlbar-left">
+                <!-- Validacion Operativa compacta + ENA Dinamico -->
+                <div class="validation-banner ok" id="validation-banner" title="Estado de validacion operativa">
+                    <span class="val-icon" id="val-icon">OK</span>
+                    <strong id="val-title">Validacion OK</strong>
+                    <span class="val-detail-inline" id="val-detail">ENA+ en modo AUTO (0.0A reposo).</span>
+                    <span class="sync-pill synced" id="sync-status-pill">Sinc: OK</span>
+                </div>
+
+                <div class="ena-dropdown-wrap" id="ena-dropdown-wrap">
+                    <button type="button" class="ena-dropdown-trigger auto" id="btn-ena-dropdown-trigger" onclick="alternarMenuEna()" title="Configurar modo de energia ENA+/ENA- en los drivers">
+                        <span class="ena-dot"></span>
+                        <span id="lbl-ena-compact">ENA: AUTO (LOW)</span>
+                        <span class="ena-caret">▾</span>
+                    </button>
+                    <div class="ena-dropdown-menu hidden" id="ena-dropdown-menu">
+                        <button type="button" class="ena-mode-btn active" id="btn-ena-auto" onclick="cambiarModoEna('AUTO'); cerrarMenuEna();">
+                            <strong>AUTO</strong> <small>0.0A en reposo</small>
+                        </button>
+                        <button type="button" class="ena-mode-btn" id="btn-ena-hold" onclick="cambiarModoEna('HOLD'); cerrarMenuEna();">
+                            <strong>HOLD</strong> <small>Retencion continua</small>
+                        </button>
+                        <button type="button" class="ena-mode-btn" id="btn-ena-free" onclick="cambiarModoEna('FREE'); cerrarMenuEna();">
+                            <strong>OFF / FREE</strong> <small>0.0A ejes libres</small>
+                        </button>
+                        <div class="menu-sep"></div>
+                        <button type="button" class="ena-mode-btn" id="btn-ena-pol" onclick="alternarPolaridadEna()">
+                            Polaridad: LOW
+                        </button>
+                    </div>
+                </div>
+
+                <button type="button" class="cb-btn" onclick="validarPosicionMotor()" title="Confirmar sincronia fisica con ESP32">
+                    Validar
+                </button>
+            </div>
+
+            <div class="controlbar-right">
+                <!-- Controles rapidos contextuales de Vista 01 (Sim) -->
+                <div class="cb-context-group active" id="cb-group-sim">
+                    <button type="button" class="cb-btn" onclick="irAOrigen()">Ir a Origen (0,0)</button>
+                    <button type="button" class="cb-btn" onclick="recorrerPerimetro()">Validar Perimetro</button>
+                    <button type="button" class="cb-btn" onclick="accionCalibrar('limpiar_rastro')">Limpiar Rastro</button>
+                    <button type="button" class="cb-btn accent" onclick="abrirModal('modal-driver-dip')">DIP S1-S6</button>
+                </div>
+
+                <!-- Controles rapidos contextuales de Vista 02 (Drawing) -->
+                <div class="cb-context-group" id="cb-group-drawing">
+                    <span class="cb-cursor-readout">
+                        <strong id="draw-cursor-mm">X: 0.0, Y: 0.0 mm</strong>
+                        <small id="draw-cursor-steps">(0, 0 p)</small>
+                    </span>
+                    <label class="cb-check">
+                        <input type="checkbox" id="chk-draw-snap">
+                        <span>Snap</span>
+                    </label>
+                    <select id="select-draw-snap-mm" class="cb-select" aria-label="Paso de cuadricula">
+                        <option value="0.5">0.5 mm</option>
+                        <option value="1" selected>1.0 mm</option>
+                        <option value="2">2.0 mm</option>
+                        <option value="5">5.0 mm</option>
+                    </select>
+                    <button type="button" class="cb-btn hidden" id="btn-finish-poly" onclick="finalizarPolilineaActiva()">Terminar Polilinea</button>
+                    <button type="button" class="cb-btn accent" onclick="abrirModal('modal-importar-svg')" title="Importar dibujo vectorial .svg de Inkscape o software CAD">Importar .SVG</button>
+                    <button type="button" class="cb-btn" onclick="cargarPlantillaDibujoDemo()">Figura Prueba</button>
+                    <button type="button" class="cb-btn" onclick="deshacerUltimoTrazo()">Deshacer</button>
+                    <button type="button" class="cb-btn" onclick="limpiarLienzoDibujo()">Limpiar</button>
+                    <span class="active-config-pill emerald" id="draw-profile-pill">Perfil: Sincronizado</span>
+                </div>
+
+                <!-- Controles rapidos contextuales de Vista 03 (Blueprint) -->
+                <div class="cb-context-group" id="cb-group-blueprint">
+                    <label class="cb-lbl" for="select-pieza-prueba">Plantilla:</label>
+                    <select id="select-pieza-prueba" class="cb-select" onchange="dibujarBlueprint()">
+                        <option value="all">Reticula + Referencia + Dibujo</option>
+                        <option value="drawing">Solo Dibujo del Estudio</option>
+                        <option value="rect">Modulo Rectangular</option>
+                        <option value="circle">Envolvente Radial</option>
+                        <option value="none">Solo Cotas</option>
+                    </select>
+                    <button type="button" class="cb-btn" onclick="descargarPlanoPNG()">Descargar PNG</button>
+                    <a href="/api/export" class="cb-btn accent" style="text-decoration:none;">Exportar JSON</a>
+                </div>
+
+                <div class="divider-v"></div>
+                <button type="button" class="cb-icon-btn" id="btn-toggle-dock" onclick="alternarDockDerecho()" title="Colapsar / Expandir Panel Derecho (Tab)">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="3" width="18" height="18" rx="2"></rect>
+                        <line x1="15" y1="3" x2="15" y2="21"></line>
+                    </svg>
+                </button>
+            </div>
+        </section>
+
+        <!-- ==================================================================
+             3. ESPACIO DE TRABAJO PRINCIPAL (TOOLBOX IZQ + CANVAS + DOCK DER)
+             ================================================================== -->
+        <div class="desktop-workspace">
+
+            <!-- BARRA DE HERRAMIENTAS VERTICAL IZQUIERDA (ESTILO INKSCAPE) -->
+            <aside class="desktop-toolbox" id="desktop-toolbox">
+                <!-- Herramientas para Vista 01 (Control Manual) -->
+                <div class="toolbox-group active" id="toolbox-sim">
+                    <button type="button" class="tbox-btn active" onclick="irAOrigen()" title="Ir a Origen Home (0,0)">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <path d="M3 10.5L12 3l9 7.5"></path>
+                            <path d="M5 9.5V20h14V9.5"></path>
+                        </svg>
+                    </button>
+                    <button type="button" class="tbox-btn" onclick="ejecutarAutoCalibracionMicroswitches('ALL')" title="Auto-Calibrar Microswitches X, Y">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <circle cx="12" cy="12" r="3"></circle>
+                            <path d="M12 2v4M12 18v4M2 12h4M18 12h4"></path>
+                        </svg>
+                    </button>
+                    <button type="button" class="tbox-btn" onclick="recorrerPerimetro()" title="Validar Perimetro Calibrado">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <rect x="4" y="4" width="16" height="16" stroke-dasharray="3 2"></rect>
+                        </svg>
+                    </button>
+                    <button type="button" class="tbox-btn" onclick="accionCalibrar('limpiar_rastro')" title="Limpiar Rastro en Lienzo">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"></path>
+                        </svg>
+                    </button>
+                    <div class="tbox-sep"></div>
+                    <button type="button" class="tbox-btn" onclick="activarTabDock('sim', 'laser')" title="Consola Manual Laser 5W">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <circle cx="12" cy="12" r="4"></circle>
+                            <path d="M12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1"></path>
+                        </svg>
+                    </button>
+                    <button type="button" class="tbox-btn" onclick="abrirModal('modal-driver-dip')" title="Switches DIP S1-S6 y Microstepping">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <rect x="3" y="5" width="18" height="14" rx="2"></rect>
+                            <line x1="8" y1="9" x2="8" y2="15"></line>
+                            <line x1="12" y1="9" x2="12" y2="15"></line>
+                            <line x1="16" y1="9" x2="16" y2="15"></line>
+                        </svg>
+                    </button>
+                    <button type="button" class="tbox-btn" onclick="abrirModal('modal-conexion')" title="Conexion Serial y Simulacion">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <path d="M12 2v6M8 4v4M16 4v4M6 8h12v4a6 6 0 0 1-12 0V8zM12 18v4"></path>
+                        </svg>
+                    </button>
+                </div>
+
+                <!-- Herramientas para Vista 02 (Estudio de Dibujo CNC) -->
+                <div class="toolbox-group" id="toolbox-drawing">
+                    <button type="button" class="tbox-btn" id="tool-select" onclick="seleccionarHerramientaDibujo('select')" title="Seleccionar y Transformar (V)">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <path d="M4 3l7 17 2.5-6.5L20 11 4 3z"></path>
+                        </svg>
+                    </button>
+                    <button type="button" class="tbox-btn" id="tool-pan" onclick="seleccionarHerramientaDibujo('pan')" title="Mano / Desplazar Vista (H)">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <path d="M18 11V6a2 2 0 0 0-4 0v4M14 10V4a2 2 0 0 0-4 0v6M10 10V6a2 2 0 0 0-4 0v8l-1.5-1.5a2 2 0 0 0-2.8 2.8L7 21h10a4 4 0 0 0 4-4v-6a2 2 0 0 0-3 0z"></path>
+                        </svg>
+                    </button>
+                    <div class="tbox-sep"></div>
+                    <button type="button" class="tbox-btn active" id="tool-freehand" onclick="seleccionarHerramientaDibujo('freehand')" title="Trazo Libre (Mouse)">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <path d="M12 19l7-7 3 3-7 7-3-3z"></path>
+                            <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"></path>
+                        </svg>
+                    </button>
+                    <button type="button" class="tbox-btn" id="tool-line" onclick="seleccionarHerramientaDibujo('line')" title="Linea Recta">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <line x1="4" y1="20" x2="20" y2="4"></line>
+                            <circle cx="4" cy="20" r="1.5" fill="currentColor"></circle>
+                            <circle cx="20" cy="4" r="1.5" fill="currentColor"></circle>
+                        </svg>
+                    </button>
+                    <button type="button" class="tbox-btn" id="tool-rect" onclick="seleccionarHerramientaDibujo('rect')" title="Rectangulo">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <rect x="4" y="5" width="16" height="14"></rect>
+                        </svg>
+                    </button>
+                    <button type="button" class="tbox-btn" id="tool-circle" onclick="seleccionarHerramientaDibujo('circle')" title="Circulo / Elipse">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <circle cx="12" cy="12" r="8"></circle>
+                        </svg>
+                    </button>
+                    <button type="button" class="tbox-btn" id="tool-triangle" onclick="seleccionarHerramientaDibujo('triangle')" title="Triangulo">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <polygon points="12 4 3 19 21 19"></polygon>
+                        </svg>
+                    </button>
+                    <button type="button" class="tbox-btn" id="tool-polyline" onclick="seleccionarHerramientaDibujo('polyline')" title="Polilinea por Puntos">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <polyline points="4 18 9 7 15 15 20 5"></polyline>
+                            <circle cx="4" cy="18" r="1.5" fill="currentColor"></circle>
+                            <circle cx="9" cy="7" r="1.5" fill="currentColor"></circle>
+                            <circle cx="15" cy="15" r="1.5" fill="currentColor"></circle>
+                            <circle cx="20" cy="5" r="1.5" fill="currentColor"></circle>
+                        </svg>
+                    </button>
+                    <button type="button" class="tbox-btn" id="tool-measure" onclick="seleccionarHerramientaDibujo('measure')" title="Regla / Medir Distancia en mm y pulsos (M)">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <path d="M21.3 8.7L8.7 21.3c-.8.8-2 .8-2.8 0L2.7 18.1c-.8-.8-.8-2 0-2.8L15.3 2.7c.8-.8 2-.8 2.8 0l3.2 3.2c.8.8.8 2 0 2.8z"></path>
+                            <line x1="7.5" y1="10.5" x2="10" y2="13"></line>
+                            <line x1="10.5" y1="7.5" x2="12.5" y2="9.5"></line>
+                            <line x1="13.5" y1="4.5" x2="16" y2="7"></line>
+                        </svg>
+                    </button>
+                    <button type="button" class="tbox-btn" id="tool-text" onclick="abrirModal('modal-texto-cnc')" title="Insertar Texto Vectorial Monolineal (T)">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <polyline points="4 7 4 4 20 4 20 7"></polyline>
+                            <line x1="9" y1="20" x2="15" y2="20"></line>
+                            <line x1="12" y1="4" x2="12" y2="20"></line>
+                        </svg>
+                    </button>
+                    <button type="button" class="tbox-btn" id="tool-primitives" onclick="abrirModal('modal-primitivas-cnc')" title="Generador de Primitivas CNC (Estrella, Poligono, Espiral, Cuadricula)">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+                        </svg>
+                    </button>
+                    <button type="button" class="tbox-btn" id="tool-svg" onclick="abrirModal('modal-importar-svg')" title="Importar Vector .SVG (Inkscape / Ctrl+I)">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                            <polyline points="14 2 14 8 20 8"></polyline>
+                            <path d="M8 15c1.5-2 3.5-2 5 0s3.5 2 5 0"></path>
+                        </svg>
+                    </button>
+                    <div class="tbox-sep"></div>
+                    <button type="button" class="tbox-btn" onclick="ajustarVistaAZona()" title="Ajustar Vista a Zona (0)">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"></path>
+                        </svg>
+                    </button>
+                    <button type="button" class="tbox-btn" onclick="zoomPasoDibujo(1)" title="Acercar Zoom (+)">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <circle cx="11" cy="11" r="7"></circle>
+                            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                            <line x1="11" y1="8" x2="11" y2="14"></line>
+                            <line x1="8" y1="11" x2="14" y2="11"></line>
+                        </svg>
+                    </button>
+                    <button type="button" class="tbox-btn" onclick="zoomPasoDibujo(-1)" title="Alejar Zoom (-)">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <circle cx="11" cy="11" r="7"></circle>
+                            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                            <line x1="8" y1="11" x2="14" y2="11"></line>
+                        </svg>
+                    </button>
+                    <button type="button" class="tbox-btn" onclick="activarTabDock('drawing', 'imagen')" title="Mapear Imagen OpenCV">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <rect x="3" y="4" width="18" height="16" rx="2"></rect>
+                            <circle cx="8.5" cy="9.5" r="1.5"></circle>
+                            <polyline points="21 15 16 10 5 20"></polyline>
+                        </svg>
+                    </button>
+                </div>
+
+                <!-- Herramientas para Vista 03 (Plano CAD) -->
+                <div class="toolbox-group" id="toolbox-blueprint">
+                    <button type="button" class="tbox-btn" onclick="cambiarVista('sim')" title="Volver a Control Manual">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <polyline points="15 18 9 12 15 6"></polyline>
+                        </svg>
+                    </button>
+                    <button type="button" class="tbox-btn" onclick="cambiarVista('drawing')" title="Ir a Estudio de Dibujo">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <path d="M12 19l7-7 3 3-7 7-3-3z"></path>
+                            <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"></path>
+                        </svg>
+                    </button>
+                    <button type="button" class="tbox-btn" onclick="descargarPlanoPNG()" title="Descargar Plano CAD PNG">
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="7 10 12 15 17 10"></polyline>
+                            <line x1="12" y1="15" x2="12" y2="3"></line>
+                        </svg>
+                    </button>
+                </div>
+            </aside>
+
+            <!-- AREA CENTRAL DE LIENZOS (100% DISPONIBLE) -->
+            <main class="desktop-canvas-stage">
+                <!-- ==============================================================
+                     VISTA 01: SIMULACION CINEMATICA Y ACTUADORES EN VIVO
+                     ============================================================== -->
+                <div id="view-sim" class="main-view active">
+                    <div class="canvas-viewport sim-viewport">
+                        <canvas id="canvas-sim"></canvas>
+
+                        <div class="motion-progress-pill hidden" id="motion-progress-box">
+                            <span class="spinner-dot"></span>
+                            <span id="motion-progress-text">Ejecutando movimiento fisico...</span>
+                        </div>
+
+                        <div class="sim-zoom-pill" id="sim-zoom-pill" title="Rueda: zoom | Arrastrar: mover vista | Doble clic: restablecer">
+                            <button type="button" onclick="zoomVistaSim(1 / 1.2)" title="Alejar (-)">-</button>
+                            <button type="button" id="lbl-sim-zoom" onclick="resetVistaSim()" title="Restablecer vista (100%)">100%</button>
+                            <button type="button" onclick="zoomVistaSim(1.2)" title="Acercar (+)">+</button>
+                        </div>
+                    </div>
+
+                    <!-- Leyenda fija fuera del canvas para no tapar estadisticas de simulacion -->
+                    <div class="sim-legend-bar">
+                        <span><i class="lg-dot origin"></i> Home (0,0) Inf. Izq.</span>
+                        <span><i class="lg-dot head"></i> Puente Fijo X + Cabezal</span>
+                        <span><i class="lg-dot trail"></i> Trazo en Placa Movil Y</span>
+                        <span><i class="lg-dot bounds"></i> Area Calibrada</span>
+                    </div>
+
+                    <!-- Tira Acoplable de Actuadores NEMA + Modulo Laser 5W -->
+                    <section class="actuators-dock" id="actuators-dock">
+                        <div class="actuators-strip">
+                            <!-- MOTOR X -->
+                            <div class="actuator-unit" id="card-motor-x">
+                                <canvas id="canvas-motor-x" width="54" height="54"></canvas>
+                                <div class="actuator-meta">
+                                    <div class="actuator-head">
+                                        <span class="actuator-name">EJE X (PUENTE FIJO)</span>
+                                        <div class="actuator-btns">
+                                            <button type="button" class="ena-toggle-btn idle" id="btn-dir-x" onclick="alternarDireccionMotor('X')">DIR: Normal</button>
+                                            <button type="button" class="ena-toggle-btn idle" id="btn-ena-x" onclick="alternarEnaMotor('X')">ENA+ HIGH (0.0A)</button>
+                                        </div>
+                                    </div>
+                                    <div class="actuator-pins">
+                                        <span>Microswitch X: <b id="lbl-sw-endstop-x">EN ORIGEN (0)</b></span>
+                                    </div>
+                                    <div class="actuator-stats">
+                                        <span>Pos: <b id="motor-x-steps">0</b> p (<span id="badge-step-x">0.1125 deg</span>)</span>
+                                        <span><b id="amp-live-x" class="amp-idle">0.0 A (Reposo)</b></span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- MOTOR Y -->
+                            <div class="actuator-unit" id="card-motor-y">
+                                <canvas id="canvas-motor-y" width="54" height="54"></canvas>
+                                <div class="actuator-meta">
+                                    <div class="actuator-head">
+                                        <span class="actuator-name">EJE Y (PLACA MOVIL)</span>
+                                        <div class="actuator-btns">
+                                            <button type="button" class="ena-toggle-btn energized" id="btn-dir-y" onclick="alternarDireccionMotor('Y')">DIR: Invertido</button>
+                                            <button type="button" class="ena-toggle-btn idle" id="btn-ena-y" onclick="alternarEnaMotor('Y')">ENA+ HIGH (0.0A)</button>
+                                        </div>
+                                    </div>
+                                    <div class="actuator-pins">
+                                        <span>Microswitch Y: <b id="lbl-sw-endstop-y">EN ORIGEN (0)</b></span>
+                                    </div>
+                                    <div class="actuator-stats">
+                                        <span>Pos: <b id="motor-y-steps">0</b> p (<span id="badge-step-y">0.1125 deg</span>)</span>
+                                        <span><b id="amp-live-y" class="amp-idle">0.0 A (Reposo)</b></span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- MOTOR Z -->
+                            <div class="actuator-unit" id="card-motor-z">
+                                <canvas id="canvas-motor-z" width="54" height="54"></canvas>
+                                <div class="actuator-meta">
+                                    <div class="actuator-head">
+                                        <span class="actuator-name">MOTOR NEMA - EJE Z</span>
+                                        <div class="actuator-btns">
+                                            <button type="button" class="ena-toggle-btn idle" id="btn-dir-z" onclick="alternarDireccionMotor('Z')">DIR: Normal</button>
+                                            <button type="button" class="ena-toggle-btn idle" id="btn-ena-z" onclick="alternarEnaMotor('Z')">ENA+ HIGH (0.0A)</button>
+                                        </div>
+                                    </div>
+                                    <div class="actuator-pins">
+                                        <span>Calibracion Z: <b id="lbl-sw-endstop-z">MANUAL (SIN SWITCH)</b></span>
+                                    </div>
+                                    <div class="actuator-stats">
+                                        <span>Pos: <b id="motor-z-steps">0</b> p (<span id="badge-step-z">0.1125 deg</span>)</span>
+                                        <span><b id="amp-live-z" class="amp-idle">0.0 A (Reposo)</b></span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- MODULO LASER 5W -->
+                            <div class="actuator-unit laser-actuator-unit" id="card-actuator-laser">
+                                <canvas id="canvas-laser-5w" width="54" height="54"></canvas>
+                                <div class="actuator-meta">
+                                    <div class="actuator-head">
+                                        <span class="actuator-name">LASER 5W (12V / 3 PINES)</span>
+                                        <div class="actuator-btns">
+                                            <button type="button" class="ena-toggle-btn idle" id="btn-strip-laser-arm" onclick="alternarArmadoLaser(!estado.laser?.armado)">DESARMADO</button>
+                                            <button type="button" class="ena-toggle-btn idle" id="btn-strip-laser-manual" onclick="alternarEmisionManualLaser()">PWM: OFF (0W)</button>
+                                        </div>
+                                    </div>
+                                    <div class="actuator-pins">
+                                        <span>Cable 3 Pines: <b id="lbl-laser-cable-mode">2 SALIDAS GND COMUN</b></span>
+                                    </div>
+                                    <div class="actuator-stats">
+                                        <span>Man: <b id="laser-strip-manual-pct">25%</b> (<span id="laser-strip-manual-pwm">PWM 64/255</span>)</span>
+                                        <span><b id="laser-strip-live-watts" class="amp-idle">0.00 W (Reposo)</b></span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+
+                <!-- ==============================================================
+                     VISTA 02: ESTUDIO DE DIBUJO CNC (LIENZO AMPLIO DE ESCRITORIO)
+                     ============================================================== -->
+                <div id="view-drawing" class="main-view">
+                    <div class="canvas-viewport drawing-viewport">
+                        <canvas id="canvas-drawing"></canvas>
+
+                        <div class="motion-progress-pill hidden" id="drawing-progress-box">
+                            <span class="spinner-dot"></span>
+                            <span id="drawing-progress-text">Trazando figura en motores...</span>
+                        </div>
+
+                        <!-- CONTROL FLOTANTE DE INICIO, PAUSA Y PROGRESO (INF. DERECHA) -->
+                        <div class="draw-playback-fab" id="draw-playback-fab">
+                            <div class="draw-fab-progress">
+                                <div class="draw-fab-prog-head">
+                                    <span id="draw-progress-label">Listo para trazar</span>
+                                    <strong id="draw-progress-pct">0%</strong>
+                                </div>
+                                <div class="draw-progress-track">
+                                    <div class="draw-progress-fill" id="draw-progress-bar-fill" style="width: 0%;"></div>
+                                </div>
+                                <div class="draw-fab-prog-sub">
+                                    <span id="draw-progress-segs">0 / 0 tramos</span>
+                                    <span id="draw-progress-eta">--</span>
+                                </div>
+                            </div>
+                            <div class="draw-fab-buttons">
+                                <button type="button" class="fab-btn play" id="btn-draw-fab-start" onclick="ejecutarDibujoEnMaquina()" title="Iniciar ejecucion del dibujo en la maquina">
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"></polygon></svg>
+                                    <span>Iniciar</span>
+                                </button>
+                                <button type="button" class="fab-btn pause" id="btn-draw-fab-pause" onclick="alternarPausaDibujo()" disabled title="Pausar o reanudar el trazado en curso">
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
+                                    <span>Pausar</span>
+                                </button>
+                                <button type="button" class="fab-btn stop" id="btn-draw-fab-stop" onclick="paroEmergencia()" title="Detener inmediatamente">
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14"></rect></svg>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ==============================================================
+                     VISTA 03: PLANO TECNICO FINAL (CAD BLUEPRINT)
+                     ============================================================== -->
+                <div id="view-blueprint" class="main-view">
+                    <div class="blueprint-kpi-strip">
+                        <div class="bp-spec-item">
+                            <span>ANCHO UTIL (X)</span>
+                            <strong id="kpi-x-mm">0.00 mm</strong>
+                            <small id="kpi-x-steps">0 pulsos</small>
+                        </div>
+                        <div class="bp-spec-item">
+                            <span>PROFUNDIDAD UTIL (Y)</span>
+                            <strong id="kpi-y-mm">0.00 mm</strong>
+                            <small id="kpi-y-steps">0 pulsos</small>
+                        </div>
+                        <div class="bp-spec-item">
+                            <span>ALTURA UTIL (Z)</span>
+                            <strong id="kpi-z-mm">0.00 mm</strong>
+                            <small id="kpi-z-steps">0 pulsos</small>
+                        </div>
+                        <div class="bp-spec-item highlight">
+                            <span>AREA DE ESTACION</span>
+                            <strong id="kpi-area-cm2">0.00 cm2</strong>
+                            <small id="kpi-safe-mm">Zona ergonomia 90%: -- x -- mm</small>
+                        </div>
+                    </div>
+
+                    <div class="canvas-viewport blueprint-viewport">
+                        <canvas id="canvas-blueprint"></canvas>
+                    </div>
+                </div>
+            </main>
+
+            <!-- ==============================================================
+                 DOCK DE INSPECTOR DERECHO ACOPLABLE Y COLAPSABLE
+                 ============================================================== -->
+            <aside class="desktop-inspector-dock" id="desktop-inspector-dock">
+                <!-- PESTAÑAS DEL DOCK PARA VISTA 01 (CONTROL MANUAL) -->
+                <div class="dock-view-panel active" id="dock-panel-sim">
+                    <div class="dock-tabs">
+                        <button type="button" class="dock-tab active" data-dock-target="sim-jog" onclick="activarTabDock('sim', 'jog')">Motores X/Y/Z</button>
+                        <button type="button" class="dock-tab" data-dock-target="sim-laser" onclick="activarTabDock('sim', 'laser')">Laser 5W Manual</button>
+                        <button type="button" class="dock-tab" data-dock-target="sim-calib" onclick="activarTabDock('sim', 'calib')">Calibracion</button>
+                    </div>
+
+                    <div class="dock-scroll-body">
+                        <!-- TAB 1: JOG MOTORES -->
+                        <div class="dock-pane active" id="dock-pane-sim-jog">
+                            <div class="panel-section">
+                                <div class="panel-head">
+                                    <div class="panel-title-with-info">
+                                        <h3>Posicionamiento Cinematico</h3>
+                                        <button type="button" class="info-tip-btn" data-info-key="jog_motores" aria-label="Informacion">i</button>
+                                    </div>
+                                    <span class="Displacement-badge" id="lbl-avance-mm">1.25 mm / clic</span>
+                                </div>
+
+                                <div class="jog-layout">
+                                    <div class="xy-pad-wrapper">
+                                        <div class="xy-grid">
+                                            <div></div>
+                                            <button type="button" id="btn-y-plus" class="pad-btn" onclick="moverEje('Y', 1)" title="Mover Eje Y hacia el fondo">
+                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="18 15 12 9 6 15"></polyline></svg>
+                                                <span class="pad-dir">Y+</span>
+                                                <span class="pad-sub">Fondo</span>
+                                            </button>
+                                            <div></div>
+
+                                            <button type="button" id="btn-x-minus" class="pad-btn" onclick="moverEje('X', 0)" title="Mover Eje X hacia la izquierda">
+                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="15 18 9 12 15 6"></polyline></svg>
+                                                <span class="pad-dir">X-</span>
+                                                <span class="pad-sub">Izq</span>
+                                            </button>
+                                            <button type="button" id="btn-home" class="pad-btn pad-center" onclick="irAOrigen()" title="Regresar al Origen (0,0)">
+                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10.5L12 3l9 7.5"></path><path d="M5 9.5V20h14V9.5"></path></svg>
+                                                <span class="pad-dir">0,0</span>
+                                                <span class="pad-sub">HOME</span>
+                                            </button>
+                                            <button type="button" id="btn-x-plus" class="pad-btn" onclick="moverEje('X', 1)" title="Mover Eje X hacia la derecha">
+                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                                                <span class="pad-dir">X+</span>
+                                                <span class="pad-sub">Der</span>
+                                            </button>
+
+                                            <div></div>
+                                            <button type="button" id="btn-y-minus" class="pad-btn" onclick="moverEje('Y', 0)" title="Mover Eje Y hacia el frente">
+                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                                                <span class="pad-dir">Y-</span>
+                                                <span class="pad-sub">Frente</span>
+                                            </button>
+                                            <div></div>
+                                        </div>
+                                    </div>
+
+                                    <div class="z-pad-wrapper">
+                                        <button type="button" id="btn-z-plus" class="pad-btn z-tall" onclick="moverEje('Z', 1)" title="Subir Eje Z">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>
+                                            <span class="pad-dir">Z+</span>
+                                            <span class="pad-sub">Subir</span>
+                                        </button>
+                                        <button type="button" id="btn-z-minus" class="pad-btn z-tall" onclick="moverEje('Z', 0)" title="Bajar Eje Z">
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><line x1="12" y1="5" x2="12" y2="19"></line><polyline points="19 12 12 19 5 12"></polyline></svg>
+                                            <span class="pad-dir">Z-</span>
+                                            <span class="pad-sub">Bajar</span>
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div class="params-stack">
+                                    <div class="param-group">
+                                        <div class="param-label-row">
+                                            <label for="input-pasos">Pulsos por comando</label>
+                                            <div class="num-input-group">
+                                                <input type="number" id="input-pasos" value="100" min="1" max="50000" step="10">
+                                                <span>pulsos</span>
+                                            </div>
+                                        </div>
+                                        <input type="range" id="slider-pasos" class="tech-slider" min="10" max="3200" step="10" value="100">
+                                        <div class="preset-pills">
+                                            <button type="button" class="chip" data-steps="50">50</button>
+                                            <button type="button" class="chip active" data-steps="100">100</button>
+                                            <button type="button" class="chip" data-steps="200">200</button>
+                                            <button type="button" class="chip" data-steps="400">400</button>
+                                            <button type="button" class="chip" data-steps="800">800</button>
+                                            <button type="button" class="chip" data-steps="1600">1600</button>
+                                        </div>
+                                    </div>
+
+                                    <div class="param-two-cols">
+                                        <div class="param-group">
+                                            <label for="input-velocidad-hz">Velocidad (Hz)</label>
+                                            <div class="num-input-group full">
+                                                <input type="number" id="input-velocidad-hz" value="500" min="100" max="10000" step="100">
+                                                <span>Hz</span>
+                                            </div>
+                                            <small class="helper-note" id="lbl-rpm-calc">15.0 RPM</small>
+                                        </div>
+
+                                        <div class="param-group">
+                                            <label for="input-pasos-mm">Relacion lineal</label>
+                                            <div class="num-input-group full">
+                                                <input type="number" id="input-pasos-mm" value="80" min="0.1" step="0.5">
+                                                <span>p/mm</span>
+                                            </div>
+                                            <small class="helper-note">40 mm/rev</small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="panel-section">
+                                <div class="panel-head">
+                                    <h3>Accesos Directos de Espacio</h3>
+                                </div>
+                                <div class="param-two-cols">
+                                    <button type="button" class="btn-subtle" onclick="optimizarOrdenFigurasDibujo()" title="Reordena las figuras por vecino mas cercano para reducir viajes en vacio">
+                                        Optimizar Orden
+                                    </button>
+                                    <button type="button" class="btn-subtle" onclick="encuadrarDisenoEnMesa()" title="Recorre el rectangulo envolvente del diseno actual con laser en 0W y Z arriba">
+                                        Encuadrar Diseno (0W)
+                                    </button>
+                                </div>
+
+                                <div class="cta-dual-stack">
+                                    <button type="button" class="btn-enter-drawing" onclick="abrirEstudioDibujo()">
+                                        <span>Abrir Estudio de Dibujo CNC</span>
+                                        <span class="arrow-ic">-&gt;</span>
+                                    </button>
+                                    <button type="button" class="btn-generate-blueprint" onclick="abrirDisenoFinal()">
+                                        <span>Ver Plano Tecnico CAD</span>
+                                        <span class="arrow-ic">-&gt;</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- TAB 2: LASER 5W MANUAL -->
+                        <div class="dock-pane" id="dock-pane-sim-laser">
+                            <div class="panel-section" id="card-laser-test-sim">
+                                <div class="panel-head">
+                                    <div class="panel-title-with-info">
+                                        <h3>Control Manual Laser 5W</h3>
+                                        <button type="button" class="info-tip-btn" data-info-key="laser_manual" aria-label="Informacion">i</button>
+                                    </div>
+                                    <span class="Displacement-badge laser-state-pill" id="laser-sim-state-badge">DESARMADO (0.00 W)</span>
+                                </div>
+
+                                <div class="drawing-stats-grid">
+                                    <div class="dip-readout-box">
+                                        <span class="ro-label">POTENCIA MANUAL</span>
+                                        <strong class="ro-val amber" id="laser-sim-watts-readout">1.25 W (25%)</strong>
+                                        <small id="laser-sim-pwm-readout">PWM: 64 / 255 | Max: 5.00 W</small>
+                                    </div>
+                                    <div class="dip-readout-box">
+                                        <span class="ro-label">EMISION EN VIVO</span>
+                                        <strong class="ro-val cyan" id="laser-sim-live-readout">0.00 W (APAGADO)</strong>
+                                        <small id="laser-sim-focus-z-readout">Foco Z: 0 p | 5000 Hz</small>
+                                    </div>
+                                </div>
+
+                                <label class="safety-toggle laser-arm-toggle">
+                                    <input type="checkbox" id="chk-laser-armed-sim" onchange="alternarArmadoLaser(this.checked)">
+                                    <span class="safety-text">
+                                        <strong>Armar Sistema Laser 5W (Llave de Seguridad)</strong>
+                                        <small>Habilita la emision manual, puntero de enfoque y pulsos.</small>
+                                    </span>
+                                </label>
+
+                                <!-- BOTONERA INTUITIVA DE ACCION RAPIDA (ESTILO PAD DE MOTORES) -->
+                                <div class="laser-action-pad">
+                                    <button type="button" class="pad-btn laser-pad-action" id="btn-laser-focus-sim" onclick="alternarPunteroFocoLaser()" title="Enciende haz tenue para alinear sin quemar">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <circle cx="12" cy="12" r="3"></circle>
+                                            <path d="M12 2v4M12 18v4M2 12h4M18 12h4"></path>
+                                        </svg>
+                                        <span class="pad-dir">FOCO GUIA</span>
+                                        <span class="pad-sub">Alinear Lente</span>
+                                    </button>
+                                    <button type="button" class="pad-btn laser-pad-action" id="btn-laser-manual-toggle" onclick="alternarEmisionManualLaser()" title="Enciende o apaga el laser de forma sostenida">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path>
+                                        </svg>
+                                        <span class="pad-dir">CONTINUO</span>
+                                        <span class="pad-sub">Encender / Off</span>
+                                    </button>
+                                    <button type="button" class="pad-btn laser-pad-action laser-pulse-btn" id="btn-laser-hold-fire"
+                                        onmousedown="iniciarGatilloManualLaser()"
+                                        onmouseup="soltarGatilloManualLaser()"
+                                        onmouseleave="soltarGatilloManualLaser()"
+                                        ontouchstart="iniciarGatilloManualLaser(); event.preventDefault();"
+                                        ontouchend="soltarGatilloManualLaser(); event.preventDefault();"
+                                        title="Emite solo mientras mantienes presionado">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <circle cx="12" cy="12" r="9"></circle>
+                                            <circle cx="12" cy="12" r="3" fill="currentColor"></circle>
+                                        </svg>
+                                        <span class="pad-dir">GATILLO</span>
+                                        <span class="pad-sub">Mantener</span>
+                                    </button>
+                                    <button type="button" class="pad-btn laser-pad-action laser-pulse-btn" onclick="dispararPulsoPruebaLaser('sim')" title="Dispara un pulso cronometrado">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <polyline points="2 12 6 12 9 4 15 20 18 12 22 12"></polyline>
+                                        </svg>
+                                        <span class="pad-dir">PULSO TEST</span>
+                                        <span class="pad-sub">Disparo Breve</span>
+                                    </button>
+                                </div>
+
+                                <div class="laser-calibration-subbox">
+                                    <div class="param-label-row">
+                                        <span class="section-eyebrow">PASOS DE POTENCIA PWM</span>
+                                        <strong id="lbl-laser-manual-inline" style="font-family:var(--font-mono); font-size:11px; color:#fbbf24;">25% (1.25 W | PWM 64)</strong>
+                                    </div>
+
+                                    <div class="laser-manual-step-pad">
+                                        <button type="button" class="pad-btn laser-pad-step" onclick="ajustarPotenciaManualPaso(-10)"><span class="pad-dir">-10%</span></button>
+                                        <button type="button" class="pad-btn laser-pad-step" onclick="ajustarPotenciaManualPaso(-5)"><span class="pad-dir">-5%</span></button>
+                                        <button type="button" class="pad-btn laser-pad-step" onclick="ajustarPotenciaManualPaso(-1)"><span class="pad-dir">-1%</span></button>
+                                        <button type="button" class="pad-btn pad-center laser-pad-zero" onclick="apagarLaserEmergencia()" title="Corte inmediato a 0 W"><span class="pad-dir">0W</span></button>
+                                        <button type="button" class="pad-btn laser-pad-step" onclick="ajustarPotenciaManualPaso(1)"><span class="pad-dir">+1%</span></button>
+                                        <button type="button" class="pad-btn laser-pad-step" onclick="ajustarPotenciaManualPaso(5)"><span class="pad-dir">+5%</span></button>
+                                        <button type="button" class="pad-btn laser-pad-step" onclick="ajustarPotenciaManualPaso(10)"><span class="pad-dir">+10%</span></button>
+                                    </div>
+
+                                    <div class="param-group">
+                                        <div class="param-label-row">
+                                            <label for="input-laser-manual-pct">Potencia Directa (% de 5W)</label>
+                                            <div class="num-input-group">
+                                                <input type="number" id="input-laser-manual-pct" value="25" min="0" max="100" step="1" onchange="fijarPotenciaManualLaser(this.value)">
+                                                <span>%</span>
+                                            </div>
+                                        </div>
+                                        <input type="range" id="slider-laser-manual-pct" class="tech-slider" min="0" max="100" step="1" value="25" oninput="previsualizarSliderManualLaser(this.value)" onchange="fijarPotenciaManualLaser(this.value)">
+                                        <div class="preset-pills">
+                                            <button type="button" class="chip" onclick="fijarPotenciaManualLaser(0)">0%</button>
+                                            <button type="button" class="chip" onclick="fijarPotenciaManualLaser(3)">3%</button>
+                                            <button type="button" class="chip" onclick="fijarPotenciaManualLaser(10)">10%</button>
+                                            <button type="button" class="chip active" onclick="fijarPotenciaManualLaser(25)">25%</button>
+                                            <button type="button" class="chip" onclick="fijarPotenciaManualLaser(50)">50%</button>
+                                            <button type="button" class="chip" onclick="fijarPotenciaManualLaser(75)">75%</button>
+                                            <button type="button" class="chip" onclick="fijarPotenciaManualLaser(100)">100%</button>
+                                        </div>
+                                    </div>
+
+                                    <label class="safety-toggle">
+                                        <input type="checkbox" id="chk-laser-manual-jog-sync" onchange="alternarJogConLaserManual(this.checked)">
+                                        <span class="safety-text">
+                                            <strong>Activar Laser al Mover X/Y Manual</strong>
+                                            <small>Emite durante el desplazamiento manual X/Y y apaga a 0W al terminar.</small>
+                                        </span>
+                                    </label>
+                                </div>
+
+                                <div class="param-two-cols">
+                                    <div class="param-group">
+                                        <label for="input-laser-focus-pct-sim">Guia Foco (%)</label>
+                                        <div class="num-input-group full">
+                                            <input type="number" id="input-laser-focus-pct-sim" value="3" min="1" max="12" step="0.5" onchange="actualizarConfiguracionLaserDesdeUI('sim')">
+                                            <span>%</span>
+                                        </div>
+                                    </div>
+                                    <div class="param-group">
+                                        <label for="input-laser-test-pct-sim">Pulso Prueba (%)</label>
+                                        <div class="num-input-group full">
+                                            <input type="number" id="input-laser-test-pct-sim" value="20" min="1" max="100" step="1" onchange="actualizarConfiguracionLaserDesdeUI('sim')">
+                                            <span id="lbl-laser-test-watts-sim">1.00 W</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="param-two-cols">
+                                    <div class="param-group">
+                                        <label for="input-laser-pulse-ms-sim">Duracion Pulso (ms)</label>
+                                        <div class="num-input-group full">
+                                            <input type="number" id="input-laser-pulse-ms-sim" value="250" min="20" max="5000" step="50" onchange="actualizarConfiguracionLaserDesdeUI('sim')">
+                                            <span>ms</span>
+                                        </div>
+                                    </div>
+                                    <div class="param-group">
+                                        <label>Presets Pulso</label>
+                                        <div class="preset-row">
+                                            <button type="button" class="chip" onclick="fijarPulsoRapidoLaser(100)">100ms</button>
+                                            <button type="button" class="chip" onclick="fijarPulsoRapidoLaser(250)">250ms</button>
+                                            <button type="button" class="chip" onclick="fijarPulsoRapidoLaser(500)">500ms</button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <button type="button" class="btn-estop" onclick="apagarLaserEmergencia()">
+                                    APAGAR LASER INMEDIATAMENTE (0.00 W)
+                                </button>
+
+                                <div class="param-two-cols">
+                                    <button type="button" class="btn-subtle" onclick="abrirEstudioEnModo('laser')">
+                                        Ir a Estudio Laser 5W
+                                    </button>
+                                    <button type="button" class="btn-subtle" onclick="abrirModal('modal-laser-config')">
+                                        Config y Cableado...
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- TAB 3: CALIBRACION RAPIDA -->
+                        <div class="dock-pane" id="dock-pane-sim-calib">
+                            <div class="panel-section">
+                                <div class="panel-head">
+                                    <div class="panel-title-with-info">
+                                        <h3>Calibracion X, Y y Eje Z</h3>
+                                        <button type="button" class="info-tip-btn" data-info-key="calibracion_ejes" aria-label="Informacion">i</button>
+                                    </div>
+                                    <span class="active-config-pill cyan" id="lbl-z-calib-summary">Home Z: 0p | Papel: 400p</span>
+                                </div>
+
+                                <div class="workflow-steps">
+                                    <div class="wf-step">
+                                        <div class="wf-info">
+                                            <strong>Auto-Calibrar Microswitches X, Y</strong>
+                                            <span>Busca origen inferior izquierdo (0,0)</span>
+                                        </div>
+                                        <button type="button" class="btn-action-secondary" onclick="ejecutarAutoCalibracionMicroswitches('ALL')">Auto X,Y</button>
+                                    </div>
+                                    <div class="param-two-cols">
+                                        <button type="button" class="btn-subtle" onclick="ejecutarAutoCalibracionMicroswitches('X')">Switch X</button>
+                                        <button type="button" class="btn-subtle" onclick="ejecutarAutoCalibracionMicroswitches('Y')">Switch Y</button>
+                                    </div>
+                                    <div class="wf-step">
+                                        <div class="wf-info">
+                                            <strong>1. Home X, Y (0, 0)</strong>
+                                            <span>Origen 2D inferior izquierdo</span>
+                                        </div>
+                                        <button type="button" class="btn-action-secondary" onclick="accionCalibrar('fijar_cero')">Fijar (0,0)</button>
+                                    </div>
+                                    <div class="wf-step">
+                                        <div class="wf-info">
+                                            <strong>2. Limite Maximo (+X, +Y)</strong>
+                                            <span>Esquina superior derecha</span>
+                                        </div>
+                                        <button type="button" class="btn-action-amber" onclick="accionCalibrar('fijar_limite')">Fijar Max XY</button>
+                                    </div>
+                                    <div class="wf-step">
+                                        <div class="wf-info">
+                                            <strong>3. Home Eje Z (0 pulsos)</strong>
+                                            <span>Herramienta levantada segura</span>
+                                        </div>
+                                        <button type="button" class="btn-action-secondary" onclick="accionCalibrar('fijar_home_z')">Home Z (0)</button>
+                                    </div>
+                                    <div class="wf-step">
+                                        <div class="wf-info">
+                                            <strong>4. Maximo Z (Contacto Papel)</strong>
+                                            <span>Punto de apoyo de trazo</span>
+                                        </div>
+                                        <button type="button" class="btn-action-amber" onclick="accionCalibrar('fijar_limite_z')">Max Z Papel</button>
+                                    </div>
+                                </div>
+
+                                <div class="param-two-cols">
+                                    <button type="button" class="btn-subtle" onclick="moverZAPosicionCalibrada('home')">Ir a Home Z</button>
+                                    <button type="button" class="btn-subtle" onclick="moverZAPosicionCalibrada('papel')">Ir a Max Z</button>
+                                </div>
+
+                                <label class="safety-toggle">
+                                    <input type="checkbox" id="chk-enable-z-main" onchange="alternarUsoZEnDibujo(this.checked)">
+                                    <span class="safety-text">
+                                        <strong>Activar Eje Z en Estudio de Dibujo</strong>
+                                        <small>Sube a Home Z al viajar y baja al Maximo Z al dibujar.</small>
+                                    </span>
+                                </label>
+
+                                <button type="button" class="btn-subtle" onclick="abrirModal('modal-calibracion-ejes')">
+                                    Configuracion Avanzada de Ejes...
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- PESTAÑAS DEL DOCK PARA VISTA 02 (ESTUDIO DE DIBUJO CNC) -->
+                <div class="dock-view-panel" id="dock-panel-drawing">
+                    <div class="dock-tabs">
+                        <button type="button" class="dock-tab active" data-dock-target="draw-nav" onclick="activarTabDock('drawing', 'nav')">Navegador</button>
+                        <button type="button" class="dock-tab" data-dock-target="draw-sel" onclick="activarTabDock('drawing', 'sel')">Transformar</button>
+                        <button type="button" class="dock-tab" data-dock-target="draw-imagen" onclick="activarTabDock('drawing', 'imagen')">Imagen CV</button>
+                        <button type="button" class="dock-tab" data-dock-target="draw-run" onclick="activarTabDock('drawing', 'run')">Trazos / Run</button>
+                    </div>
+
+                    <div class="dock-scroll-body">
+                        <!-- TAB 1: NAVEGADOR + MODO + ZONA -->
+                        <div class="dock-pane active" id="dock-pane-draw-nav">
+                            <div class="panel-section ps-panel">
+                                <div class="panel-head">
+                                    <div class="panel-title-with-info">
+                                        <h3>Navegador (Zoom / Pan)</h3>
+                                        <button type="button" class="info-tip-btn" data-info-key="navegador" aria-label="Informacion">i</button>
+                                    </div>
+                                    <span class="Displacement-badge" id="nav-zoom-badge">100%</span>
+                                </div>
+
+                                <canvas id="canvas-navigator" class="navigator-canvas" title="Clic o arrastra para mover la vista"></canvas>
+
+                                <div class="nav-zoom-row">
+                                    <button type="button" class="nav-btn" onclick="zoomPasoDibujo(-1)">-</button>
+                                    <input type="range" id="range-nav-zoom" min="0" max="1000" value="330" oninput="zoomDesdeSlider(this.value)">
+                                    <button type="button" class="nav-btn" onclick="zoomPasoDibujo(1)">+</button>
+                                    <div class="num-input-group nav-zoom-input">
+                                        <input type="number" id="input-nav-zoom" value="100" min="25" max="4000" step="5" onchange="aplicarZoomDesdeInput()">
+                                        <span>%</span>
+                                    </div>
+                                </div>
+
+                                <div class="sel-actions-grid">
+                                    <button type="button" class="btn-subtle" onclick="ajustarVistaAZona()">Ajustar Zona (0)</button>
+                                    <button type="button" class="btn-subtle" onclick="zoomTamanoReal()">1:1 Real (1)</button>
+                                    <button type="button" class="btn-subtle" onclick="zoomASeleccion()">Zoom Seleccion</button>
+                                    <button type="button" class="btn-subtle" onclick="zoomATodosLosTrazos()">Zoom Trazos</button>
+                                </div>
+
+                                <div class="param-two-cols">
+                                    <div class="param-group">
+                                        <label for="input-nav-cx">Centro X (mm)</label>
+                                        <div class="num-input-group full">
+                                            <input type="number" id="input-nav-cx" step="1" onchange="aplicarCentroDesdeInputs()">
+                                            <span>mm</span>
+                                        </div>
+                                    </div>
+                                    <div class="param-group">
+                                        <label for="input-nav-cy">Centro Y (mm)</label>
+                                        <div class="num-input-group full">
+                                            <input type="number" id="input-nav-cy" step="1" onchange="aplicarCentroDesdeInputs()">
+                                            <span>mm</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="nav-view-options">
+                                    <label class="inline-check"><input type="checkbox" checked onchange="alternarOpcionVista('reglas', this.checked)"><span>Reglas (mm)</span></label>
+                                    <label class="inline-check"><input type="checkbox" checked onchange="alternarOpcionVista('cuadricula', this.checked)"><span>Cuadricula</span></label>
+                                    <label class="inline-check"><input type="checkbox" onchange="alternarOpcionVista('nodos', this.checked)"><span>Nodos</span></label>
+                                    <label class="inline-check"><input type="checkbox" onchange="alternarOpcionVista('orden', this.checked)"><span>Orden/Viajes</span></label>
+                                    <label class="inline-check"><input type="checkbox" onchange="alternarOpcionVista('grosorReal', this.checked)"><span>Grosor Real</span></label>
+                                </div>
+                                <small class="img-info" id="nav-scale-info"></small>
+                            </div>
+
+                            <!-- SELECTOR DE MODO DEL ESTUDIO -->
+                            <div class="panel-section studio-mode-card">
+                                <div class="panel-head">
+                                    <div class="panel-title-with-info">
+                                        <h3>Modo de Herramienta</h3>
+                                        <button type="button" class="info-tip-btn" data-info-key="modo_herramienta" aria-label="Informacion">i</button>
+                                    </div>
+                                    <span class="active-config-pill cyan" id="studio-tool-mode-pill">MODO DIBUJO (PLUMA)</span>
+                                </div>
+                                <div class="studio-mode-switcher">
+                                    <button type="button" class="mode-switch-btn active" id="btn-mode-tool-dibujo" onclick="cambiarModoHerramientaEstudio('dibujo')">
+                                        <strong>Dibujo (Pluma / Eje Z)</strong>
+                                        <small>Sube/baja Eje Z</small>
+                                    </button>
+                                    <button type="button" class="mode-switch-btn laser-switch" id="btn-mode-tool-laser" onclick="cambiarModoHerramientaEstudio('laser')">
+                                        <strong>Laser 5W (PWM)</strong>
+                                        <small>Grabado / Corte 5W</small>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- ZONA CALIBRADA -->
+                            <div class="panel-section">
+                                <div class="panel-head">
+                                    <div class="panel-title-with-info">
+                                        <h3>Zona Calibrada y Eje Z</h3>
+                                        <button type="button" class="info-tip-btn" data-info-key="zona_calibrada" aria-label="Informacion">i</button>
+                                    </div>
+                                    <span class="Displacement-badge" id="draw-workspace-badge">160.0 x 120.0 mm</span>
+                                </div>
+
+                                <div class="param-two-cols">
+                                    <div class="param-group">
+                                        <label for="input-draw-width-steps">Max X (pulsos)</label>
+                                        <div class="num-input-group full">
+                                            <input type="number" id="input-draw-width-steps" value="8400" min="50" max="100000" step="100" onchange="aplicarDimensionesPulsosDesdeDibujo()">
+                                            <span>p</span>
+                                        </div>
+                                    </div>
+                                    <div class="param-group">
+                                        <label for="input-draw-height-steps">Max Y (pulsos)</label>
+                                        <div class="num-input-group full">
+                                            <input type="number" id="input-draw-height-steps" value="7900" min="50" max="100000" step="100" onchange="aplicarDimensionesPulsosDesdeDibujo()">
+                                            <span>p</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="param-two-cols">
+                                    <div class="param-group">
+                                        <label for="input-draw-width-mm">Ancho X (mm)</label>
+                                        <div class="num-input-group full">
+                                            <input type="number" id="input-draw-width-mm" value="160" min="5" max="2000" step="1" onchange="aplicarDimensionesMesaDesdeDibujo()">
+                                            <span>mm</span>
+                                        </div>
+                                    </div>
+                                    <div class="param-group">
+                                        <label for="input-draw-height-mm">Fondo Y (mm)</label>
+                                        <div class="num-input-group full">
+                                            <input type="number" id="input-draw-height-mm" value="120" min="5" max="2000" step="1" onchange="aplicarDimensionesMesaDesdeDibujo()">
+                                            <span>mm</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="params-stack" id="panel-draw-z-controls">
+                                    <label class="safety-toggle">
+                                        <input type="checkbox" id="chk-draw-use-z" onchange="alternarUsoZEnDibujo(this.checked)">
+                                        <span class="safety-text">
+                                            <strong>Control de Eje Z al Dibujar</strong>
+                                            <small id="lbl-draw-z-mode">Levanta y apoya el lapiz automaticamente.</small>
+                                        </span>
+                                    </label>
+                                    <div class="param-two-cols">
+                                        <div class="param-group">
+                                            <label for="input-z-up">Home Z (Viaje)</label>
+                                            <div class="num-input-group full">
+                                                <input type="number" id="input-z-up" value="0" step="50" onchange="actualizarParametrosZDesdeInputs()">
+                                                <span>p</span>
+                                            </div>
+                                        </div>
+                                        <div class="param-group">
+                                            <label for="input-z-down">Max Z (Papel)</label>
+                                            <div class="num-input-group full">
+                                                <input type="number" id="input-z-down" value="400" step="50" onchange="actualizarParametrosZDesdeInputs()">
+                                                <span>p</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- TAB 2: TRANSFORMAR SELECCION -->
+                        <div class="dock-pane" id="dock-pane-draw-sel">
+                            <div class="panel-section">
+                                <div class="panel-head">
+                                    <div class="panel-title-with-info">
+                                        <h3 id="lbl-sel-name">Sin seleccion</h3>
+                                        <button type="button" class="info-tip-btn" data-info-key="transformar" aria-label="Informacion">i</button>
+                                    </div>
+                                </div>
+
+                                <div class="empty-shapes-msg" id="sel-empty-msg">
+                                    Usa la herramienta "Seleccionar" (V) y haz clic en una figura, trazo o imagen de fondo para moverla o escalarla.
+                                </div>
+
+                                <div class="params-stack hidden" id="sel-panel-body">
+                                    <div class="param-two-cols">
+                                        <div class="param-group">
+                                            <label for="sel-pos-x">Posicion X (mm)</label>
+                                            <div class="num-input-group full">
+                                                <input type="number" id="sel-pos-x" step="0.5" onchange="aplicarDimensionesSeleccionDesdeInputs('x')">
+                                                <span>mm</span>
+                                            </div>
+                                        </div>
+                                        <div class="param-group">
+                                            <label for="sel-pos-y">Posicion Y (mm)</label>
+                                            <div class="num-input-group full">
+                                                <input type="number" id="sel-pos-y" step="0.5" onchange="aplicarDimensionesSeleccionDesdeInputs('y')">
+                                                <span>mm</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="param-two-cols">
+                                        <div class="param-group">
+                                            <label for="sel-width">Ancho (mm)</label>
+                                            <div class="num-input-group full">
+                                                <input type="number" id="sel-width" step="0.5" min="0" onchange="aplicarDimensionesSeleccionDesdeInputs('w')">
+                                                <span>mm</span>
+                                            </div>
+                                        </div>
+                                        <div class="param-group">
+                                            <label for="sel-height">Alto (mm)</label>
+                                            <div class="num-input-group full">
+                                                <input type="number" id="sel-height" step="0.5" min="0" onchange="aplicarDimensionesSeleccionDesdeInputs('h')">
+                                                <span>mm</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <label class="inline-check">
+                                        <input type="checkbox" id="chk-sel-proportional" checked>
+                                        <span>Mantener proporcion</span>
+                                    </label>
+
+                                    <div class="sel-actions-grid">
+                                        <button type="button" class="btn-subtle" onclick="escalarSeleccion(0.9)">-10%</button>
+                                        <button type="button" class="btn-subtle" onclick="escalarSeleccion(1.1)">+10%</button>
+                                        <button type="button" class="btn-subtle" onclick="centrarSeleccionEnZona()">Centrar</button>
+                                        <button type="button" class="btn-subtle" onclick="ajustarSeleccionAZona()">Ajustar 90%</button>
+                                        <button type="button" class="btn-subtle sel-only-figure" onclick="rotarSeleccion90()">Rotar 90</button>
+                                        <button type="button" class="btn-subtle sel-only-figure" onclick="duplicarSeleccion()">Duplicar</button>
+                                        <button type="button" class="btn-subtle sel-only-figure" onclick="espejoSeleccion('h')">Espejo H</button>
+                                        <button type="button" class="btn-subtle sel-only-figure" onclick="espejoSeleccion('v')">Espejo V</button>
+                                    </div>
+                                    <button type="button" class="btn-subtle danger-subtle" onclick="eliminarSeleccion()">Eliminar Seleccion (Supr)</button>
+                                    <small class="sel-warning ok" id="lbl-sel-warning"></small>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- TAB 3: MAPEO DE IMAGEN OPENCV + LASERGRBL -->
+                        <div class="dock-pane" id="dock-pane-draw-imagen">
+                            <div class="panel-section">
+                                <div class="panel-head">
+                                    <div class="panel-title-with-info">
+                                        <h3>Mapear Imagen (OpenCV + LaserGRBL)</h3>
+                                        <button type="button" class="info-tip-btn" data-info-key="imagen_cv" aria-label="Informacion">i</button>
+                                    </div>
+                                </div>
+
+                                <div class="param-two-cols">
+                                    <label class="btn-subtle file-btn">
+                                        Cargar Imagen...
+                                        <input type="file" id="input-img-file" accept="image/*" onchange="cargarImagenParaMapeo(event)" hidden>
+                                    </label>
+                                    <button type="button" class="btn-subtle" onclick="seleccionarImagenDeFondo()">Seleccionar Fondo</button>
+                                </div>
+                                <small class="img-info" id="img-map-info">Sin imagen cargada.</small>
+                                <small class="img-info" id="img-machine-info"></small>
+
+                                <div class="params-stack hidden" id="img-map-controls">
+                                    <div class="param-two-cols">
+                                        <div class="param-group">
+                                            <label for="select-img-engine">Motor</label>
+                                            <select id="select-img-engine" onchange="programarMapeoImagen(true)">
+                                                <option value="opencv" selected>OpenCV + LaserGRBL</option>
+                                                <option value="js">Local (Navegador)</option>
+                                            </select>
+                                        </div>
+                                        <div class="param-group">
+                                            <label for="select-img-quality">Calidad</label>
+                                            <select id="select-img-quality" onchange="aplicarPresetCalidadImagen()">
+                                                <option value="borrador">Borrador</option>
+                                                <option value="normal" selected>Normal</option>
+                                                <option value="alta">Alta</option>
+                                                <option value="maxima">Maxima</option>
+                                            </select>
+                                        </div>
+                                    </div>
+
+                                    <div class="param-group">
+                                        <label for="select-img-mode">Tecnica de Grabado / Vectorizado</label>
+                                        <select id="select-img-mode" onchange="programarMapeoImagen(true)">
+                                            <option value="centro" selected>Esqueleto / Linea Central (Zhang-Suen)</option>
+                                            <option value="canny">Bordes OpenCV Canny</option>
+                                            <option value="xdog">Boceto Artistico XDoG</option>
+                                            <option value="contorno">Vectorizado Contornos + Chaikin</option>
+                                            <option value="contorno_relleno">Contorno + Relleno Line-to-Line</option>
+                                            <option value="line2line">LaserGRBL Line-to-Line Tracing</option>
+                                            <option value="crosshatch">Sombreado Cruzado (Cross-Hatching)</option>
+                                            <option value="dithering">LaserGRBL 1-Bit Dithering</option>
+                                            <option value="raster_pwm">Raster Engraving (Modulacion PWM por Lineas)</option>
+                                        </select>
+                                    </div>
+
+                                    <div class="param-group img-dither-only hidden">
+                                        <label for="select-img-dither">Matriz de Dithering</label>
+                                        <select id="select-img-dither" onchange="programarMapeoImagen(true)">
+                                            <option value="atkinson" selected>Atkinson (alto contraste)</option>
+                                            <option value="floyd_steinberg">Floyd-Steinberg</option>
+                                            <option value="stucki">Stucki</option>
+                                            <option value="jarvis">Jarvis-Judice-Ninke</option>
+                                            <option value="sierra">Sierra-3</option>
+                                            <option value="bayer">Bayer Ordenado 4x4</option>
+                                        </select>
+                                    </div>
+
+                                    <!-- PARAMETROS AJUSTABLES DE RASTER ENGRAVING CON MODULACION PWM POR LINEAS -->
+                                    <div class="params-stack img-raster-only hidden">
+                                        <div class="param-two-cols">
+                                            <div class="param-group">
+                                                <label for="input-img-raster-pmin">Potencia Min. Raster</label>
+                                                <div class="num-input-group full">
+                                                    <input type="number" id="input-img-raster-pmin" value="12" min="0" max="95" step="1" onchange="programarMapeoImagen()">
+                                                    <span>%</span>
+                                                </div>
+                                            </div>
+                                            <div class="param-group">
+                                                <label for="input-img-raster-pmax">Potencia Max. Raster</label>
+                                                <div class="num-input-group full">
+                                                    <input type="number" id="input-img-raster-pmax" value="85" min="5" max="100" step="1" onchange="programarMapeoImagen()">
+                                                    <span>%</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="param-two-cols">
+                                            <div class="param-group">
+                                                <label for="input-img-raster-levels">Niveles Tonales PWM</label>
+                                                <div class="num-input-group full">
+                                                    <input type="number" id="input-img-raster-levels" value="16" min="2" max="64" step="1" onchange="programarMapeoImagen()">
+                                                    <span>niv</span>
+                                                </div>
+                                            </div>
+                                            <div class="param-group">
+                                                <label for="input-img-raster-gamma">Gamma Tonal</label>
+                                                <div class="num-input-group full">
+                                                    <input type="number" id="input-img-raster-gamma" value="1.0" min="0.3" max="2.5" step="0.05" onchange="programarMapeoImagen()">
+                                                    <span>g</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="param-two-cols">
+                                            <div class="param-group">
+                                                <label for="select-img-raster-dir">Direccion de Escaneo</label>
+                                                <select id="select-img-raster-dir" onchange="programarMapeoImagen()">
+                                                    <option value="bidireccional" selected>Bidireccional (Serpentina)</option>
+                                                    <option value="unidireccional">Unidireccional (1 Sentido)</option>
+                                                </select>
+                                            </div>
+                                            <div class="param-group">
+                                                <label for="input-img-raster-skip">Salto en Blanco</label>
+                                                <div class="num-input-group full">
+                                                    <input type="number" id="input-img-raster-skip" value="1.5" min="0" max="50" step="0.25" onchange="programarMapeoImagen()">
+                                                    <span>mm</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="param-two-cols">
+                                        <div class="param-group">
+                                            <label for="select-img-thresh-mode">Umbralizacion</label>
+                                            <select id="select-img-thresh-mode" onchange="programarMapeoImagen()">
+                                                <option value="global" selected>Manual Fijo</option>
+                                                <option value="otsu">Otsu Automatico</option>
+                                                <option value="adaptativo_gauss">Adaptativo Gaussiano</option>
+                                                <option value="adaptativo_media">Adaptativo Media</option>
+                                            </select>
+                                        </div>
+                                        <div class="param-group">
+                                            <label for="range-img-threshold">Umbral: <strong id="lbl-img-threshold">128</strong></label>
+                                            <input type="range" id="range-img-threshold" min="10" max="245" value="128" oninput="programarMapeoImagen()">
+                                        </div>
+                                    </div>
+
+                                    <div class="param-two-cols">
+                                        <div class="param-group">
+                                            <label for="range-img-brightness">Brillo: <strong id="lbl-img-brightness">0</strong></label>
+                                            <input type="range" id="range-img-brightness" min="-100" max="100" value="0" oninput="programarMapeoImagen()">
+                                        </div>
+                                        <div class="param-group">
+                                            <label for="range-img-contrast">Contraste: <strong id="lbl-img-contrast">0</strong></label>
+                                            <input type="range" id="range-img-contrast" min="-100" max="100" value="0" oninput="programarMapeoImagen()">
+                                        </div>
+                                    </div>
+
+                                    <div class="param-two-cols">
+                                        <label class="inline-check"><input type="checkbox" id="chk-img-invert" onchange="programarMapeoImagen()"><span>Invertir</span></label>
+                                        <label class="inline-check"><input type="checkbox" id="chk-img-clahe" onchange="programarMapeoImagen()"><span>CLAHE Nitidez</span></label>
+                                    </div>
+
+                                    <div class="param-two-cols">
+                                        <div class="param-group">
+                                            <label for="select-img-filter">Filtro OpenCV</label>
+                                            <select id="select-img-filter" onchange="programarMapeoImagen()">
+                                                <option value="bilateral" selected>Bilateral</option>
+                                                <option value="gaussiano">Gaussiano</option>
+                                                <option value="mediana">Mediana</option>
+                                            </select>
+                                        </div>
+                                        <div class="param-group">
+                                            <label for="select-img-blur">Intensidad</label>
+                                            <select id="select-img-blur" onchange="programarMapeoImagen()">
+                                                <option value="0">Sin filtro</option>
+                                                <option value="1" selected>Suave</option>
+                                                <option value="2">Medio</option>
+                                                <option value="3">Fuerte</option>
+                                            </select>
+                                        </div>
+                                    </div>
+
+                                    <div class="param-two-cols">
+                                        <div class="param-group">
+                                            <label for="input-img-pen">Grosor punta</label>
+                                            <div class="num-input-group full">
+                                                <input type="number" id="input-img-pen" value="0.5" min="0.05" max="5" step="0.05" onchange="programarMapeoImagen()">
+                                                <span>mm</span>
+                                            </div>
+                                        </div>
+                                        <div class="param-group">
+                                            <label for="input-img-detail">Detalle pixel</label>
+                                            <div class="num-input-group full">
+                                                <input type="number" id="input-img-detail" value="0.5" min="0.05" max="5" step="0.05" onchange="programarMapeoImagen()">
+                                                <span>mm</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="param-two-cols">
+                                        <div class="param-group">
+                                            <label for="input-img-simplify">Douglas-Peucker</label>
+                                            <div class="num-input-group full">
+                                                <input type="number" id="input-img-simplify" value="0.2" min="0" max="5" step="0.02" onchange="programarMapeoImagen()">
+                                                <span>mm</span>
+                                            </div>
+                                        </div>
+                                        <div class="param-group">
+                                            <label for="select-img-smooth">Chaikin</label>
+                                            <select id="select-img-smooth" onchange="programarMapeoImagen()">
+                                                <option value="0">0 pasadas</option>
+                                                <option value="1" selected>1 pasada</option>
+                                                <option value="2">2 pasadas</option>
+                                            </select>
+                                        </div>
+                                    </div>
+
+                                    <div class="param-two-cols">
+                                        <div class="param-group">
+                                            <label for="input-img-minlen">Spot Removal</label>
+                                            <div class="num-input-group full">
+                                                <input type="number" id="input-img-minlen" value="1.0" min="0" max="50" step="0.1" onchange="programarMapeoImagen()">
+                                                <span>mm</span>
+                                            </div>
+                                        </div>
+                                        <div class="param-group img-hatch-only hidden">
+                                            <label for="input-img-spacing">Line-to-Line</label>
+                                            <div class="num-input-group full">
+                                                <input type="number" id="input-img-spacing" value="0.8" min="0.05" max="10" step="0.05" onchange="programarMapeoImagen()">
+                                                <span>mm</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="param-group img-hatch-only hidden">
+                                        <label for="select-img-angle">Angulo de Barrido</label>
+                                        <select id="select-img-angle" onchange="programarMapeoImagen()">
+                                            <option value="0">0 deg</option>
+                                            <option value="45" selected>45 deg</option>
+                                            <option value="90">90 deg</option>
+                                            <option value="135">135 deg</option>
+                                        </select>
+                                    </div>
+
+                                    <div class="param-two-cols">
+                                        <label class="inline-check"><input type="checkbox" id="chk-img-optimize" checked onchange="programarMapeoImagen()"><span>Optimizar ruta</span></label>
+                                        <label class="inline-check"><input type="checkbox" id="chk-img-join" checked onchange="programarMapeoImagen()"><span>Fusionar trazos</span></label>
+                                    </div>
+
+                                    <div class="img-bg-box">
+                                        <span class="section-eyebrow">FONDO</span>
+                                        <div class="param-two-cols">
+                                            <label class="inline-check"><input type="checkbox" id="chk-img-visible" checked onchange="alternarVisibilidadImagen(this.checked)"><span>Mostrar fondo</span></label>
+                                            <label class="inline-check"><input type="checkbox" id="chk-img-show-mask" onchange="alternarMascaraImagen(this.checked)"><span>Mascara B/N</span></label>
+                                        </div>
+                                        <div class="param-group">
+                                            <label for="range-img-opacity">Opacidad: <strong id="lbl-img-opacity">45 %</strong></label>
+                                            <input type="range" id="range-img-opacity" min="0" max="100" value="45" oninput="cambiarOpacidadImagen(this.value)">
+                                        </div>
+                                        <div class="param-two-cols">
+                                            <label class="inline-check"><input type="checkbox" id="chk-img-show-travel"><span>Ver viajes</span></label>
+                                            <label class="inline-check"><input type="checkbox" id="chk-img-hide-after" checked><span>Ocultar al agregar</span></label>
+                                        </div>
+                                    </div>
+
+                                    <small class="img-info" id="img-map-status"></small>
+                                    <div class="img-stats-grid" id="img-map-stats"></div>
+
+                                    <div class="param-two-cols">
+                                        <button type="button" class="btn-subtle" onclick="programarMapeoImagen(true)">Regenerar</button>
+                                        <button type="button" class="btn-subtle danger-subtle" onclick="quitarImagenMapeo()">Quitar</button>
+                                    </div>
+                                    <button type="button" class="btn-execute-drawing" id="btn-img-add" onclick="agregarMapeoAlDibujo()" disabled>
+                                        <span>Agregar Trazos al Dibujo</span>
+                                        <span class="arrow-ic">-&gt;</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- TAB 4: TRAZOS + MODO LASER 5W + EJECUTAR -->
+                        <div class="dock-pane" id="dock-pane-draw-run">
+                            <!-- SUBPANEL LASER 5W EN ESTUDIO -->
+                            <div class="panel-section laser-card-accent" id="card-laser-studio-panel" style="display: none;">
+                                <div class="panel-head">
+                                    <div class="panel-title-with-info">
+                                        <h3>Parametros Laser 5W</h3>
+                                        <button type="button" class="info-tip-btn" data-info-key="laser_estudio" aria-label="Informacion">i</button>
+                                    </div>
+                                    <span class="Displacement-badge laser-state-pill" id="laser-draw-state-badge">DESARMADO (0.00 W)</span>
+                                </div>
+
+                                <div class="drawing-stats-grid">
+                                    <div class="dip-readout-box">
+                                        <span class="ro-label">TRABAJO (5W)</span>
+                                        <strong class="ro-val amber" id="laser-draw-watts-readout">1.75 W (35%)</strong>
+                                        <small id="laser-draw-pwm-readout">PWM: 89 / 255</small>
+                                    </div>
+                                    <div class="dip-readout-box">
+                                        <span class="ro-label">VELOCIDAD</span>
+                                        <strong class="ro-val cyan" id="laser-draw-speeds-readout">900 / 2200 Hz</strong>
+                                        <small id="laser-draw-passes-readout">1 pasada | 0.00W</small>
+                                    </div>
+                                </div>
+
+                                <label class="safety-toggle laser-arm-toggle">
+                                    <input type="checkbox" id="chk-laser-armed-draw" onchange="alternarArmadoLaser(this.checked)">
+                                    <span class="safety-text">
+                                        <strong>Armar Laser 5W</strong>
+                                        <small>Habilita salida PWM al ejecutar.</small>
+                                    </span>
+                                </label>
+
+                                <div class="param-group">
+                                    <label for="select-laser-operation-mode">Modo de Laser</label>
+                                    <select id="select-laser-operation-mode" class="select-input" onchange="cambiarSubModoLaser(this.value)">
+                                        <option value="grabado_linea">Grabado de Lineas y Dibujo Vectorial</option>
+                                        <option value="grabado_relleno">Grabado Relleno Line2Line / Crosshatch</option>
+                                        <option value="grabado_tonal">Fotograbado Tonal / Dithering</option>
+                                        <option value="corte">Corte Laser Multipaso</option>
+                                    </select>
+                                    <small class="img-info" id="lbl-laser-submode-desc"></small>
+                                </div>
+
+                                <div class="param-group">
+                                    <label for="select-laser-preset">Material (Diodo 5W)</label>
+                                    <select id="select-laser-preset" class="select-input" onchange="aplicarPresetMaterialLaser(this.value)">
+                                        <option value="papel_marcado">Papel / Cartulina (18% | 0.90 W)</option>
+                                        <option value="carton_grabado">Carton Grabado (30% | 1.50 W)</option>
+                                        <option value="carton_corte">Carton Corte (85% | 4.25 W | 2p)</option>
+                                        <option value="madera_grabado_fino" selected>Madera Balsa Fino (35% | 1.75 W)</option>
+                                        <option value="madera_grabado_profundo">Madera / MDF Profundo (60% | 3.00 W)</option>
+                                        <option value="madera_fotograbado">Fotograbado Dithering (42% | 2.10 W)</option>
+                                        <option value="madera_corte_balsa_3mm">Corte Madera 2-3 mm (95% | 4.75 W | 3p)</option>
+                                        <option value="cuero_grabado">Cuero Natural (28% | 1.40 W)</option>
+                                        <option value="acrilico_oscuro_grabado">Acrilico Oscuro (45% | 2.25 W)</option>
+                                    </select>
+                                    <small class="img-info" id="lbl-laser-preset-desc"></small>
+                                </div>
+
+                                <div class="param-group">
+                                    <label for="range-laser-power-pct">Potencia: <strong id="lbl-laser-power-inline">35% (1.75 W)</strong></label>
+                                    <div class="param-two-cols">
+                                        <input type="range" id="range-laser-power-pct" min="0" max="100" step="1" value="35" oninput="sincronizarSliderPotenciaLaser(this.value)" onchange="actualizarConfiguracionLaserDesdeUI('draw')">
+                                        <div class="num-input-group full">
+                                            <input type="number" id="input-laser-power-pct" value="35" min="0" max="100" step="1" onchange="sincronizarSliderPotenciaLaser(this.value); actualizarConfiguracionLaserDesdeUI('draw')">
+                                            <span>%</span>
+                                        </div>
+                                    </div>
+                                    <div class="preset-row">
+                                        <button type="button" class="chip" onclick="fijarPotenciaRapidaLaser(15)">15%</button>
+                                        <button type="button" class="chip" onclick="fijarPotenciaRapidaLaser(35)">35%</button>
+                                        <button type="button" class="chip" onclick="fijarPotenciaRapidaLaser(60)">60%</button>
+                                        <button type="button" class="chip" onclick="fijarPotenciaRapidaLaser(85)">85%</button>
+                                        <button type="button" class="chip" onclick="fijarPotenciaRapidaLaser(100)">100%</button>
+                                    </div>
+                                </div>
+
+                                <div class="param-two-cols">
+                                    <div class="param-group">
+                                        <label for="input-laser-speed-work">Vel. Grabado</label>
+                                        <div class="num-input-group full">
+                                            <input type="number" id="input-laser-speed-work" value="900" min="50" max="10000" step="50" onchange="actualizarConfiguracionLaserDesdeUI('draw')">
+                                            <span>Hz</span>
+                                        </div>
+                                    </div>
+                                    <div class="param-group">
+                                        <label for="input-laser-speed-travel">Vel. Viaje</label>
+                                        <div class="num-input-group full">
+                                            <input type="number" id="input-laser-speed-travel" value="2200" min="100" max="12000" step="100" onchange="actualizarConfiguracionLaserDesdeUI('draw')">
+                                            <span>Hz</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="param-two-cols">
+                                    <div class="param-group">
+                                        <label for="input-laser-passes">Pasadas</label>
+                                        <div class="num-input-group full">
+                                            <input type="number" id="input-laser-passes" value="1" min="1" max="20" step="1" onchange="actualizarConfiguracionLaserDesdeUI('draw')">
+                                            <span>p</span>
+                                        </div>
+                                    </div>
+                                    <div class="param-group">
+                                        <label for="input-laser-cool-ms">Pausa (ms)</label>
+                                        <div class="num-input-group full">
+                                            <input type="number" id="input-laser-cool-ms" value="0" min="0" max="10000" step="100" onchange="actualizarConfiguracionLaserDesdeUI('draw')">
+                                            <span>ms</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="laser-calibration-subbox">
+                                    <label class="safety-toggle">
+                                        <input type="checkbox" id="chk-laser-use-z-focus" onchange="actualizarConfiguracionLaserDesdeUI('draw')">
+                                        <span class="safety-text">
+                                            <strong>Auto-Foco Z al Iniciar</strong>
+                                            <small>Mueve Z a la altura focal antes de emitir.</small>
+                                        </span>
+                                    </label>
+                                    <div class="param-two-cols">
+                                        <div class="param-group">
+                                            <label for="input-laser-z-focus-draw">Foco Z</label>
+                                            <div class="num-input-group full">
+                                                <input type="number" id="input-laser-z-focus-draw" value="0" step="25" onchange="actualizarConfiguracionLaserDesdeUI('draw')">
+                                                <span>p</span>
+                                            </div>
+                                        </div>
+                                        <div class="param-group">
+                                            <label for="input-laser-focus-pct-draw">Guia (%)</label>
+                                            <div class="num-input-group full">
+                                                <input type="number" id="input-laser-focus-pct-draw" value="3" min="1" max="12" step="0.5" onchange="actualizarConfiguracionLaserDesdeUI('draw')">
+                                                <span>%</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="param-two-cols">
+                                        <button type="button" class="btn-subtle" id="btn-laser-focus-draw" onclick="alternarPunteroFocoLaser()">Puntero Foco</button>
+                                        <button type="button" class="btn-subtle laser-pulse-btn" onclick="dispararPulsoPruebaLaser('draw')">Pulso Prueba</button>
+                                    </div>
+                                    <div class="param-two-cols">
+                                        <button type="button" class="btn-subtle" onclick="probarEncuadreLaserPerimetral()">Encuadre Perimetro</button>
+                                        <button type="button" class="btn-subtle" onclick="generarPatronCalibracionLaser5W()">Patron Calibracion</button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- LISTA DE FIGURAS Y EJECUCION -->
+                            <div class="panel-section">
+                                <div class="panel-head">
+                                    <div class="panel-title-with-info">
+                                        <h3>Figuras y Trazos</h3>
+                                        <button type="button" class="info-tip-btn" data-info-key="trazos_ejecucion" aria-label="Informacion">i</button>
+                                    </div>
+                                    <span class="active-config-pill cyan" id="draw-count-pill">0 figuras</span>
+                                </div>
+
+                                <button type="button" class="btn-action-secondary" onclick="abrirModal('modal-importar-svg')">
+                                    Importar Vector .SVG (Inkscape / CAD)...
+                                </button>
+
+                                <div class="drawing-shapes-list" id="drawing-shapes-list">
+                                    <div class="empty-shapes-msg">Dibuja en el lienzo o mapea una imagen desde la pestana Imagen CV.</div>
+                                </div>
+
+                                <div class="drawing-stats-grid">
+                                    <div class="dip-readout-box">
+                                        <span class="ro-label">SEGMENTOS</span>
+                                        <strong class="ro-val cyan" id="draw-stat-segments">0 tramos</strong>
+                                        <small id="draw-stat-dist">Distancia: 0.0 mm</small>
+                                    </div>
+                                    <div class="dip-readout-box">
+                                        <span class="ro-label">TIEMPO EST.</span>
+                                        <strong class="ro-val emerald" id="draw-stat-time">0.0 s</strong>
+                                        <small id="draw-stat-speed">A velocidad Hz</small>
+                                    </div>
+                                </div>
+
+                                <!-- Barra de progreso sincronizada dentro del inspector de dibujo -->
+                                <div class="dock-progress-box" id="dock-draw-progress-wrap">
+                                    <div class="draw-fab-prog-head">
+                                        <span id="dock-draw-progress-label">Progreso de ejecucion</span>
+                                        <strong id="dock-draw-progress-pct">0%</strong>
+                                    </div>
+                                    <div class="draw-progress-track">
+                                        <div class="draw-progress-fill" id="dock-draw-progress-fill" style="width: 0%;"></div>
+                                    </div>
+                                </div>
+
+                                <div class="param-two-cols">
+                                    <button type="button" class="btn-subtle" onclick="optimizarOrdenFigurasDibujo()" title="Reordena las figuras por vecino mas cercano para reducir viajes en vacio">
+                                        Optimizar Orden
+                                    </button>
+                                    <button type="button" class="btn-subtle" onclick="encuadrarDisenoEnMesa()" title="Recorre el rectangulo envolvente del diseno actual con laser en 0W y Z arriba">
+                                        Encuadrar Diseno (0W)
+                                    </button>
+                                </div>
+
+                                <div class="cta-dual-stack">
+                                    <button type="button" class="btn-execute-drawing" id="btn-run-drawing" onclick="ejecutarDibujoEnMaquina()">
+                                        <span>Ejecutar Dibujo en Motores (X, Y, Z)</span>
+                                        <span class="arrow-ic">-&gt;</span>
+                                    </button>
+                                    <button type="button" class="btn-estop" onclick="paroEmergencia()">
+                                        Detener Ejecucion Inmediatamente
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+        </div>
+
+        <!-- ==================================================================
+             4. CONSOLA EXPANDIBLE INFERIOR IZQUIERDA (ESTATUS + ENERGIA) Y STATUSBAR
+             ================================================================== -->
+        <section class="desktop-console-drawer hidden" id="desktop-console-drawer">
+            <div class="console-drawer-head">
+                <div class="console-drawer-title">
+                    <span class="pulse-indicator"></span>
+                    <strong>Consola de Estatus y Condicion de Energia</strong>
+                </div>
+                <div class="console-drawer-actions">
+                    <button type="button" class="cb-btn" onclick="limpiarHistorialConsola()">Limpiar Consola</button>
+                    <button type="button" class="modal-close-btn" onclick="alternarConsolaDrawer()" title="Cerrar consola">X</button>
+                </div>
+            </div>
+            <div class="console-drawer-body">
+                <div class="console-log-pane" id="console-log-history">
+                    <div class="console-log-line"><span class="log-ts">[INIT]</span> Sistema inicializado. Listo para operar.</div>
+                </div>
+                <div class="console-energy-pane">
+                    <div class="energy-stat-card">
+                        <span>MODO ENA+ / REPOSO</span>
+                        <strong id="drawer-ena-mode">AUTO (0.0A Reposo)</strong>
+                    </div>
+                    <div class="energy-stat-card">
+                        <span>CORRIENTE / DRIVER</span>
+                        <strong id="drawer-current-amp">2.0 A | Microstep 16 (3200 P/rev)</strong>
+                    </div>
+                    <div class="energy-stat-card">
+                        <span>ENERGIA EJES X / Y / Z</span>
+                        <strong id="drawer-axes-power">X: Reposo | Y: Reposo | Z: Reposo</strong>
+                    </div>
+                    <div class="energy-stat-card">
+                        <span>MODULO LASER 5W (12V)</span>
+                        <strong id="drawer-laser-power">DESARMADO | 0.00 W (PWM 0)</strong>
+                    </div>
+                    <div class="energy-stat-card">
+                        <span>AREA CALIBRADA</span>
+                        <strong id="drawer-area-info">160.0 x 120.0 mm</strong>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <footer class="desktop-statusbar">
+            <div class="sb-console">
+                <button type="button" class="sb-console-toggle" id="btn-toggle-console-drawer" onclick="alternarConsolaDrawer()" title="Expandir / contraer consola de estatus y estadisticas de energia">
+                    <span>Consola / Energia</span>
+                    <span class="sb-arrow" id="lbl-console-drawer-arrow">▲</span>
+                </button>
+                <span class="pulse-indicator" id="console-dot"></span>
+                <span id="console-msg" class="console-text">Sistema inicializado. ENA+ en modo AUTO (0.0A en reposo).</span>
+            </div>
+
+            <div class="sb-dro-strip">
+                <div class="sb-axis">
+                    <i class="axis-dot x"></i>
+                    <span class="sb-ax-lbl">X:</span>
+                    <strong id="dro-x-mm">0.00 <small>mm</small></strong>
+                    <span class="sb-ax-sub" id="dro-x-steps">0 p</span>
+                    <span class="sb-ax-rot">(<b id="motor-x-angle">0 deg</b>)</span>
+                    <div class="sb-mini-bar"><div class="metric-fill x" id="bar-x" style="width:0%"></div></div>
+                </div>
+
+                <div class="sb-axis">
+                    <i class="axis-dot y"></i>
+                    <span class="sb-ax-lbl">Y:</span>
+                    <strong id="dro-y-mm">0.00 <small>mm</small></strong>
+                    <span class="sb-ax-sub" id="dro-y-steps">0 p</span>
+                    <span class="sb-ax-rot">(<b id="motor-y-angle">0 deg</b>)</span>
+                    <div class="sb-mini-bar"><div class="metric-fill y" id="bar-y" style="width:0%"></div></div>
+                </div>
+
+                <div class="sb-axis">
+                    <i class="axis-dot z"></i>
+                    <span class="sb-ax-lbl">Z:</span>
+                    <strong id="dro-z-mm">0.00 <small>mm</small></strong>
+                    <span class="sb-ax-sub" id="dro-z-steps">0 p</span>
+                    <span class="sb-ax-rot">(<b id="motor-z-angle">0 deg</b>)</span>
+                    <div class="sb-mini-bar"><div class="metric-fill z" id="bar-z" style="width:50%"></div></div>
+                </div>
+            </div>
+
+            <div class="sb-driver-stats">
+                <span class="calib-badge calibrated" id="hud-driver-ms">MICROSTEP 16</span>
+                <span class="sb-stat" id="hud-driver-pulse">3200 <small>P/rev</small></span>
+                <span class="sb-stat" id="hud-driver-curr"><b>2.0 A</b> (Rep: 0.0A)</span>
+                <span class="sb-stat">Area: <strong id="lbl-area-pasos">160.0 x 120.0 mm</strong></span>
+            </div>
+        </footer>
+    </div>
+
+    <!-- ======================================================================
+         5. VENTANAS EMERGENTES (MODALES DE CONFIGURACION CON APLICAR / CANCELAR)
+         ====================================================================== -->
+    <div class="modal-backdrop hidden" id="modal-backdrop" onclick="cerrarModalSiBackdrop(event)">
+
+        <!-- MODAL 1: CONEXION SERIAL, SIMULACION Y SEGURIDAD -->
+        <div class="desktop-modal hidden" id="modal-conexion" role="dialog" aria-modal="true">
+            <div class="modal-titlebar">
+                <span>Configuracion de Conexion Serial, Simulacion y Seguridad</span>
+                <button type="button" class="modal-close-btn" onclick="cancelarModal('modal-conexion')">X</button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-grid-2">
+                    <div class="param-group">
+                        <label for="select-port">Puerto Serial ESP32 (COM)</label>
+                        <div class="modal-inline-row">
+                            <select id="select-port" class="select-input">
+                                <option value="COM3">COM3</option>
+                            </select>
+                            <button type="button" id="btn-refresh-ports" class="btn-subtle" title="Refrescar puertos">Refrescar</button>
+                            <button type="button" id="btn-connect" class="btn-subtle">Conectar</button>
+                        </div>
+                    </div>
+
+                    <div class="param-group">
+                        <label>Modo de Operacion</label>
+                        <label class="sim-switch" style="margin-top:4px;">
+                            <input type="checkbox" id="chk-simulacion" checked>
+                            <span class="switch-track"></span>
+                            <span class="switch-text">Modo Simulacion Virtual (Sin hardware fisico)</span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="params-stack">
+                    <label class="safety-toggle">
+                        <input type="checkbox" id="chk-autohome-startup" checked onchange="alternarAutoCalibrarInicio(this.checked)">
+                        <span class="safety-text">
+                            <strong>Auto-Calibrar X, Y en Cada Inicio con Microswitches (Inf-Izq)</strong>
+                            <small>Al iniciar o conectar la estacion, busca automaticamente los interruptores de rodaja X e Y para fijar (0, 0). El Eje Z mantiene su calibracion manual.</small>
+                        </span>
+                    </label>
+
+                    <label class="safety-toggle">
+                        <input type="checkbox" id="chk-soft-limits">
+                        <span class="safety-text">
+                            <strong>Enclave de Seguridad A Prueba de Errores (Soft-Limits)</strong>
+                            <small>Impide que los motores X, Y o Z se muevan fuera del rango calibrado.</small>
+                        </span>
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn-subtle" onclick="cancelarModal('modal-conexion')">Cancelar</button>
+                <button type="button" class="btn-modal-apply" onclick="aplicarModal('modal-conexion')">Aplicar</button>
+            </div>
+        </div>
+
+        <!-- MODAL 2: PERFILES DE CONFIGURACION -->
+        <div class="desktop-modal hidden" id="modal-perfiles" role="dialog" aria-modal="true">
+            <div class="modal-titlebar">
+                <span>Administrador de Perfiles de Estacion (perfiles/)</span>
+                <button type="button" class="modal-close-btn" onclick="cancelarModal('modal-perfiles')">X</button>
+            </div>
+            <div class="modal-body">
+                <div class="param-group">
+                    <label for="select-profile">Perfil Activo</label>
+                    <div class="modal-inline-row">
+                        <select id="select-profile" class="select-input" onchange="cargarPerfilSeleccionado()">
+                            <option value="estacion_estandar_16x">Estacion Estandar 16x (160x120 mm)</option>
+                        </select>
+                        <button type="button" class="btn-subtle" onclick="cargarPerfilSeleccionado()">Cargar</button>
+                        <button type="button" class="btn-profile-update" onclick="guardarPerfilActual('actualizar')">Actualizar Actual</button>
+                    </div>
+                    <small class="img-info" id="profile-desc-text">Carpeta: perfiles/</small>
+                </div>
+
+                <div class="param-group">
+                    <label for="input-profile-name">Crear Nuevo Perfil</label>
+                    <div class="modal-inline-row">
+                        <input type="text" id="input-profile-name" class="profile-text-input" placeholder="Nombre para nuevo perfil...">
+                        <button type="button" class="btn-subtle" onclick="guardarPerfilActual('nuevo')">Guardar Nuevo</button>
+                    </div>
+                </div>
+
+                <div class="modal-inline-row">
+                    <input type="file" id="file-import-profile" accept=".json" style="display: none;" onchange="importarArchivoPerfil(event)">
+                    <button type="button" class="btn-subtle" onclick="document.getElementById('file-import-profile').click()">Importar JSON</button>
+                    <a href="/api/export" class="btn-subtle" style="text-decoration: none;">Exportar JSON</a>
+                    <button type="button" class="btn-profile-delete" onclick="eliminarPerfilSeleccionado()">Eliminar Perfil</button>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn-subtle" onclick="cancelarModal('modal-perfiles')">Cancelar</button>
+                <button type="button" class="btn-modal-apply" onclick="aplicarModal('modal-perfiles')">Aplicar</button>
+            </div>
+        </div>
+
+        <!-- MODAL 3: DRIVER STEPPER, SWITCHES DIP (S1-S6) Y TABLAS -->
+        <div class="desktop-modal modal-wide hidden" id="modal-driver-dip" role="dialog" aria-modal="true">
+            <div class="modal-titlebar">
+                <span>Configuracion de Driver Stepper — Switches DIP (S1-S6) y Tablas</span>
+                <button type="button" class="modal-close-btn" onclick="cancelarModal('modal-driver-dip')">X</button>
+            </div>
+            <div class="modal-body">
+                <div class="dip-master-grid">
+                    <div class="tech-table-card dip-physical-card">
+                        <div class="tech-table-header">
+                            <div>
+                                <span class="section-eyebrow">INTERRUPTOR FISICO</span>
+                                <h3>Estado Actual S1 - S6</h3>
+                            </div>
+                        </div>
+
+                        <div class="dip-bank-wrapper">
+                            <div class="dip-group">
+                                <span class="dip-group-label">MICROSTEP (S1-S3)</span>
+                                <div class="dip-switches-row">
+                                    <div class="dip-unit" onclick="alternarSwitch('S1')">
+                                        <span class="dip-state-lbl" id="lbl-sw-S1">OFF</span>
+                                        <div class="dip-slot" id="slot-sw-S1"><div class="dip-actuator"></div></div>
+                                        <span class="dip-name">S1</span>
+                                    </div>
+                                    <div class="dip-unit" onclick="alternarSwitch('S2')">
+                                        <span class="dip-state-lbl" id="lbl-sw-S2">OFF</span>
+                                        <div class="dip-slot" id="slot-sw-S2"><div class="dip-actuator"></div></div>
+                                        <span class="dip-name">S2</span>
+                                    </div>
+                                    <div class="dip-unit" onclick="alternarSwitch('S3')">
+                                        <span class="dip-state-lbl" id="lbl-sw-S3">ON</span>
+                                        <div class="dip-slot on" id="slot-sw-S3"><div class="dip-actuator"></div></div>
+                                        <span class="dip-name">S3</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="dip-divider"></div>
+
+                            <div class="dip-group">
+                                <span class="dip-group-label">CURRENT (S4-S6)</span>
+                                <div class="dip-switches-row">
+                                    <div class="dip-unit" onclick="alternarSwitch('S4')">
+                                        <span class="dip-state-lbl" id="lbl-sw-S4">ON</span>
+                                        <div class="dip-slot on" id="slot-sw-S4"><div class="dip-actuator"></div></div>
+                                        <span class="dip-name">S4</span>
+                                    </div>
+                                    <div class="dip-unit" onclick="alternarSwitch('S5')">
+                                        <span class="dip-state-lbl" id="lbl-sw-S5">OFF</span>
+                                        <div class="dip-slot" id="slot-sw-S5"><div class="dip-actuator"></div></div>
+                                        <span class="dip-name">S5</span>
+                                    </div>
+                                    <div class="dip-unit" onclick="alternarSwitch('S6')">
+                                        <span class="dip-state-lbl" id="lbl-sw-S6">OFF</span>
+                                        <div class="dip-slot" id="slot-sw-S6"><div class="dip-actuator"></div></div>
+                                        <span class="dip-name">S6</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="dip-readout-grid">
+                            <div class="dip-readout-box">
+                                <span class="ro-label">TABLA 1 (S1-S3)</span>
+                                <strong class="ro-val cyan" id="ro-microstep">Microstep: 16</strong>
+                                <small id="ro-pulserev">3200 Pulse/rev | 0.1125 deg</small>
+                            </div>
+                            <div class="dip-readout-box">
+                                <span class="ro-label">TABLA 2 (S4-S6)</span>
+                                <strong class="ro-val emerald" id="ro-current">Current: 2.0 A</strong>
+                                <small id="ro-pkcurrent">PK: 2.2 A | Reposo: 0.0 A (ENA)</small>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="tech-table-card">
+                        <div class="tech-table-header">
+                            <h3>Tabla 1: Microstep / Pulse</h3>
+                            <span class="active-config-pill cyan" id="tbl1-active-summary">Microstep 16 (3200)</span>
+                        </div>
+                        <table class="driver-table" id="tabla-microstep">
+                            <thead><tr><th>Micro step</th><th>Pulse/rev</th><th>S1</th><th>S2</th><th>S3</th></tr></thead>
+                            <tbody>
+                                <tr data-s1="true" data-s2="true" data-s3="true" onclick="aplicarFilaMicrostep(true, true, true)"><td><span class="ms-tag nc">NC</span></td><td>NC</td><td><span class="sw-pill on">ON</span></td><td><span class="sw-pill on">ON</span></td><td><span class="sw-pill on">ON</span></td></tr>
+                                <tr data-s1="true" data-s2="true" data-s3="false" onclick="aplicarFilaMicrostep(true, true, false)"><td><strong>1</strong></td><td>200</td><td><span class="sw-pill on">ON</span></td><td><span class="sw-pill on">ON</span></td><td><span class="sw-pill off">OFF</span></td></tr>
+                                <tr data-s1="true" data-s2="false" data-s3="true" onclick="aplicarFilaMicrostep(true, false, true)"><td><strong>2/A</strong></td><td>400</td><td><span class="sw-pill on">ON</span></td><td><span class="sw-pill off">OFF</span></td><td><span class="sw-pill on">ON</span></td></tr>
+                                <tr data-s1="false" data-s2="true" data-s3="true" onclick="aplicarFilaMicrostep(false, true, true)"><td><strong>2/B</strong></td><td>400</td><td><span class="sw-pill off">OFF</span></td><td><span class="sw-pill on">ON</span></td><td><span class="sw-pill on">ON</span></td></tr>
+                                <tr data-s1="true" data-s2="false" data-s3="false" onclick="aplicarFilaMicrostep(true, false, false)"><td><strong>4</strong></td><td>800</td><td><span class="sw-pill on">ON</span></td><td><span class="sw-pill off">OFF</span></td><td><span class="sw-pill off">OFF</span></td></tr>
+                                <tr data-s1="false" data-s2="true" data-s3="false" onclick="aplicarFilaMicrostep(false, true, false)"><td><strong>8</strong></td><td>1600</td><td><span class="sw-pill off">OFF</span></td><td><span class="sw-pill on">ON</span></td><td><span class="sw-pill off">OFF</span></td></tr>
+                                <tr data-s1="false" data-s2="false" data-s3="true" onclick="aplicarFilaMicrostep(false, false, true)"><td><strong>16</strong></td><td>3200</td><td><span class="sw-pill off">OFF</span></td><td><span class="sw-pill off">OFF</span></td><td><span class="sw-pill on">ON</span></td></tr>
+                                <tr data-s1="false" data-s2="false" data-s3="false" onclick="aplicarFilaMicrostep(false, false, false)"><td><strong>32</strong></td><td>6400</td><td><span class="sw-pill off">OFF</span></td><td><span class="sw-pill off">OFF</span></td><td><span class="sw-pill off">OFF</span></td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="tech-table-card">
+                        <div class="tech-table-header">
+                            <h3>Tabla 2: Current</h3>
+                            <span class="active-config-pill emerald" id="tbl2-active-summary">2.0 A (PK 2.2 A)</span>
+                        </div>
+                        <table class="driver-table" id="tabla-corriente">
+                            <thead><tr><th>Current (A)</th><th>PK Current</th><th>S4</th><th>S5</th><th>S6</th></tr></thead>
+                            <tbody>
+                                <tr data-s4="true" data-s5="true" data-s6="true" onclick="aplicarFilaCorriente(true, true, true)"><td><strong>0.5</strong></td><td>0.7</td><td><span class="sw-pill on">ON</span></td><td><span class="sw-pill on">ON</span></td><td><span class="sw-pill on">ON</span></td></tr>
+                                <tr data-s4="true" data-s5="false" data-s6="true" onclick="aplicarFilaCorriente(true, false, true)"><td><strong>1.0</strong></td><td>1.2</td><td><span class="sw-pill on">ON</span></td><td><span class="sw-pill off">OFF</span></td><td><span class="sw-pill on">ON</span></td></tr>
+                                <tr data-s4="true" data-s5="true" data-s6="false" onclick="aplicarFilaCorriente(true, true, false)"><td><strong>1.5</strong></td><td>1.7</td><td><span class="sw-pill on">ON</span></td><td><span class="sw-pill on">ON</span></td><td><span class="sw-pill off">OFF</span></td></tr>
+                                <tr data-s4="true" data-s5="false" data-s6="false" onclick="aplicarFilaCorriente(true, false, false)"><td><strong>2.0</strong></td><td>2.2</td><td><span class="sw-pill on">ON</span></td><td><span class="sw-pill off">OFF</span></td><td><span class="sw-pill off">OFF</span></td></tr>
+                                <tr data-s4="false" data-s5="true" data-s6="true" onclick="aplicarFilaCorriente(false, true, true)"><td><strong>2.5</strong></td><td>2.7</td><td><span class="sw-pill off">OFF</span></td><td><span class="sw-pill on">ON</span></td><td><span class="sw-pill on">ON</span></td></tr>
+                                <tr data-s4="false" data-s5="false" data-s6="true" onclick="aplicarFilaCorriente(false, false, true)"><td><strong>2.8</strong></td><td>2.9</td><td><span class="sw-pill off">OFF</span></td><td><span class="sw-pill off">OFF</span></td><td><span class="sw-pill on">ON</span></td></tr>
+                                <tr data-s4="false" data-s5="true" data-s6="false" onclick="aplicarFilaCorriente(false, true, false)"><td><strong>3.0</strong></td><td>3.2</td><td><span class="sw-pill off">OFF</span></td><td><span class="sw-pill on">ON</span></td><td><span class="sw-pill off">OFF</span></td></tr>
+                                <tr data-s4="false" data-s5="false" data-s6="false" onclick="aplicarFilaCorriente(false, false, false)"><td><strong>3.5</strong></td><td>4.0</td><td><span class="sw-pill off">OFF</span></td><td><span class="sw-pill off">OFF</span></td><td><span class="sw-pill off">OFF</span></td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn-subtle" onclick="cancelarModal('modal-driver-dip')">Cancelar</button>
+                <button type="button" class="btn-modal-apply" onclick="aplicarModal('modal-driver-dip')">Aplicar</button>
+            </div>
+        </div>
+
+        <!-- MODAL 4: CALIBRACION DE EJES, ESPACIO Y VELOCIDAD (HZ) -->
+        <div class="desktop-modal hidden" id="modal-calibracion-ejes" role="dialog" aria-modal="true">
+            <div class="modal-titlebar">
+                <span>Calibracion de Espacio (X, Y, Z) y Velocidad de Motores (Hz)</span>
+                <button type="button" class="modal-close-btn" onclick="cancelarModal('modal-calibracion-ejes')">X</button>
+            </div>
+            <div class="modal-body">
+                <div class="param-group">
+                    <label for="input-config-velocidad-hz">Velocidad Global de Motores (Hz) — Aplica en Control Manual y Disenos Finales</label>
+                    <div class="modal-inline-row">
+                        <div class="num-input-group full">
+                            <input type="number" id="input-config-velocidad-hz" value="500" min="50" max="4000" step="50">
+                            <span>Hz (pulsos/s)</span>
+                        </div>
+                    </div>
+                    <div class="preset-pills" style="margin-top:4px;">
+                        <button type="button" class="chip" onclick="fijarVelocidadConfigModal(300)">300 Hz (Precision)</button>
+                        <button type="button" class="chip" onclick="fijarVelocidadConfigModal(500)">500 Hz (Estandar)</button>
+                        <button type="button" class="chip" onclick="fijarVelocidadConfigModal(900)">900 Hz (Rapido)</button>
+                        <button type="button" class="chip" onclick="fijarVelocidadConfigModal(1500)">1500 Hz (Alto)</button>
+                    </div>
+                </div>
+
+                <div class="wiring-box">
+                    <strong>Como ajustar los Hz y su efecto en motores y disenos finales:</strong>
+                    <ul>
+                        <li><b>200 - 500 Hz:</b> Mayor torque y precision; recomendado para trazos complejos, curvas cerradas o evitar perdida de pasos.</li>
+                        <li><b>600 - 1200 Hz:</b> Equilibrio optimo entre rapidez y suavidad para dibujos estandar y recorridos de diseno.</li>
+                        <li><b>&gt; 1200 Hz:</b> Alta velocidad; si escuchas vibracion o el motor pierde pasos, reduce los Hz o revisa la corriente (S4-S6).</li>
+                        <li><b>Guardado:</b> Al presionar <b>Aplicar</b> se envia al controlador, recalcula el tiempo del diseno final y queda listo para guardar en tu perfil.</li>
+                    </ul>
+                </div>
+
+                <p class="modal-desc">Ejecuta la calibracion por microswitches de rodaja en X/Y o fija manualmente los limites del area de trabajo y la altura de contacto del Eje Z.</p>
+                <div class="modal-grid-2">
+                    <button type="button" class="btn-action-secondary" onclick="ejecutarAutoCalibracionMicroswitches('ALL')">Auto-Calibrar Microswitches X, Y</button>
+                    <button type="button" class="btn-subtle" onclick="aplicarDimensionesPulsosDesdeDibujo()">Sincronizar Espacio con Limites</button>
+                    <button type="button" class="btn-action-secondary" onclick="accionCalibrar('fijar_cero')">1. Fijar Home X, Y (0,0)</button>
+                    <button type="button" class="btn-action-amber" onclick="accionCalibrar('fijar_limite')">2. Fijar Limite Maximo (+X, +Y)</button>
+                    <button type="button" class="btn-action-secondary" onclick="accionCalibrar('fijar_home_z')">3. Fijar Home Z (Levantado 0)</button>
+                    <button type="button" class="btn-action-amber" onclick="accionCalibrar('fijar_limite_z')">4. Fijar Maximo Z (Papel)</button>
+                </div>
+                <div class="modal-grid-2" style="margin-top:8px;">
+                    <button type="button" class="btn-subtle" onclick="moverZAPosicionCalibrada('home')">Probar Ir a Home Z</button>
+                    <button type="button" class="btn-subtle" onclick="moverZAPosicionCalibrada('papel')">Probar Ir a Maximo Z (Papel)</button>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn-subtle" onclick="cancelarModal('modal-calibracion-ejes')">Cancelar</button>
+                <button type="button" class="btn-modal-apply" onclick="aplicarModal('modal-calibracion-ejes')">Aplicar</button>
+            </div>
+        </div>
+
+        <!-- MODAL 5: CONFIGURACION OPTICA LASER 5W Y CABLEADO 3 PINES -->
+        <div class="desktop-modal hidden" id="modal-laser-config" role="dialog" aria-modal="true">
+            <div class="modal-titlebar">
+                <span>Calibracion Optica Laser 5W y Conexion de 3 Entradas (VCC, GND, PWM)</span>
+                <button type="button" class="modal-close-btn" onclick="cancelarModal('modal-laser-config')">X</button>
+            </div>
+            <div class="modal-body">
+                <div class="param-two-cols">
+                    <div class="param-group">
+                        <label for="input-laser-z-focus-sim">Punto Focal Calibrado Z (Pulsos)</label>
+                        <div class="num-input-group full">
+                            <input type="number" id="input-laser-z-focus-sim" value="0" step="25" onchange="actualizarConfiguracionLaserDesdeUI('sim')">
+                            <span>pulsos</span>
+                        </div>
+                    </div>
+                    <div class="param-group">
+                        <label>Calibracion de Altura Focal Z</label>
+                        <div class="modal-inline-row">
+                            <button type="button" class="btn-subtle" onclick="fijarPuntoFocalZLaser()">Fijar Z Actual</button>
+                            <button type="button" class="btn-subtle" onclick="irAPuntoFocalZLaser()">Ir a Foco Z</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="wiring-box">
+                    <strong>Conexion Fisica Laser 5W de 3 Entradas (VCC 12V, GND, PWM):</strong>
+                    <ul>
+                        <li><b>Cable a elegir:</b> Usa el cable que divide el <b>GND en 2 salidas</b> (Cable bifurcado en "Y").</li>
+                        <li><b>Salida 1 (VCC + GND):</b> Conectala a tu <b>Fuente de 12V DC</b> (+12V y -GND).</li>
+                        <li><b>Salida 2 (PWM + GND):</b> Conectala al <b>Controlador ESP32</b> (Senal PWM y Tierra comun GND).</li>
+                        <li><b>Por que:</b> El segundo GND iguala la referencia electrica entre la fuente de 12V y el ESP32 sin enviar 12V al microcontrolador.</li>
+                    </ul>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn-subtle" onclick="cancelarModal('modal-laser-config')">Cancelar</button>
+                <button type="button" class="btn-modal-apply" onclick="aplicarModal('modal-laser-config')">Aplicar</button>
+            </div>
+        </div>
+
+        <!-- MODAL 6: AYUDA Y ATAJOS DE TECLADO -->
+        <div class="desktop-modal hidden" id="modal-ayuda" role="dialog" aria-modal="true">
+            <div class="modal-titlebar">
+                <span>Atajos de Teclado, Navegacion y Ayuda — NEMA Studio Pro</span>
+                <button type="button" class="modal-close-btn" onclick="cancelarModal('modal-ayuda')">X</button>
+            </div>
+            <div class="modal-body">
+                <div class="wiring-box">
+                    <strong>Atajos del Estudio de Dibujo CNC:</strong>
+                    <ul>
+                        <li><b>V</b>: Herramienta Seleccionar / Transformar | <b>H</b>: Herramienta Mano (Pan) | <b>M</b>: Regla de Medicion</li>
+                        <li><b>Rueda del Mouse</b>: Zoom centrado en el cursor | <b>Espacio + Arrastrar</b> o <b>Boton Central</b>: Desplazar vista</li>
+                        <li><b>0</b>: Ajustar vista a la zona calibrada | <b>1</b>: Zoom Tamano Real (1:1) | <b>+ / -</b>: Acercar / Alejar</li>
+                        <li><b>Supr</b>: Eliminar figura seleccionada | <b>Esc</b>: Paro de Emergencia Inmediato</li>
+                        <li><b>Flechas de Teclado / RePag / AvPag</b>: Mover ejes X, Y, Z manualmente en Control Manual</li>
+                    </ul>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn-subtle" onclick="cancelarModal('modal-ayuda')">Cerrar</button>
+            </div>
+        </div>
+
+        <!-- MODAL 7: TEXTO VECTORIAL CNC (TRAZO MONOLINEAL) -->
+        <div class="desktop-modal hidden" id="modal-texto-cnc" role="dialog" aria-modal="true">
+            <div class="modal-titlebar">
+                <span>Insertar Texto Vectorial CNC (Trazo Monolineal)</span>
+                <button type="button" class="modal-close-btn" onclick="cancelarModal('modal-texto-cnc')">X</button>
+            </div>
+            <div class="modal-body">
+                <div class="param-group">
+                    <label for="input-cnc-text">Texto a trazar (A-Z, 0-9, simbolos)</label>
+                    <input type="text" id="input-cnc-text" class="profile-text-input" value="CNC 5W" placeholder="Escribe el texto...">
+                </div>
+                <div class="modal-grid-2">
+                    <div class="param-group">
+                        <label for="input-cnc-text-height">Altura de letra (mm)</label>
+                        <div class="num-input-group full">
+                            <input type="number" id="input-cnc-text-height" value="14" min="3" max="100" step="1">
+                            <span>mm</span>
+                        </div>
+                    </div>
+                    <div class="param-group">
+                        <label for="input-cnc-text-spacing">Espaciado entre letras</label>
+                        <div class="num-input-group full">
+                            <input type="number" id="input-cnc-text-spacing" value="1.25" min="0.8" max="3" step="0.05">
+                            <span>x</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn-subtle" onclick="cancelarModal('modal-texto-cnc')">Cancelar</button>
+                <button type="button" class="btn-modal-apply" onclick="aplicarModal('modal-texto-cnc')">Insertar Texto</button>
+            </div>
+        </div>
+
+        <!-- MODAL 8: GENERADOR DE PRIMITIVAS CNC -->
+        <div class="desktop-modal hidden" id="modal-primitivas-cnc" role="dialog" aria-modal="true">
+            <div class="modal-titlebar">
+                <span>Generador de Primitivas y Patrones CNC</span>
+                <button type="button" class="modal-close-btn" onclick="cancelarModal('modal-primitivas-cnc')">X</button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-grid-2">
+                    <div class="param-group">
+                        <label for="select-cnc-prim-tipo">Tipo de Figura</label>
+                        <select id="select-cnc-prim-tipo" class="select-input">
+                            <option value="poligono">Poligono Regular</option>
+                            <option value="estrella">Estrella Vectorial</option>
+                            <option value="espiral">Espiral de Arquimedes</option>
+                            <option value="cuadricula">Cuadricula de Calibracion</option>
+                            <option value="mira">Mira / Cruz de Alineacion</option>
+                        </select>
+                    </div>
+                    <div class="param-group">
+                        <label for="input-cnc-prim-size">Tamano / Diametro (mm)</label>
+                        <div class="num-input-group full">
+                            <input type="number" id="input-cnc-prim-size" value="40" min="5" max="200" step="2">
+                            <span>mm</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-grid-2">
+                    <div class="param-group">
+                        <label for="input-cnc-prim-n">Lados / Puntas / Vueltas / Celdas</label>
+                        <div class="num-input-group full">
+                            <input type="number" id="input-cnc-prim-n" value="6" min="3" max="24" step="1">
+                            <span>unid</span>
+                        </div>
+                    </div>
+                    <div class="param-group">
+                        <label for="input-cnc-prim-ratio">Relacion Interior (Estrella)</label>
+                        <div class="num-input-group full">
+                            <input type="number" id="input-cnc-prim-ratio" value="0.45" min="0.15" max="0.9" step="0.05">
+                            <span>%</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn-subtle" onclick="cancelarModal('modal-primitivas-cnc')">Cancelar</button>
+                <button type="button" class="btn-modal-apply" onclick="aplicarModal('modal-primitivas-cnc')">Insertar Figura</button>
+            </div>
+        </div>
+
+        <!-- MODAL 9: IMPORTADOR VECTORIAL SVG (INKSCAPE / ESTANDAR W3C) -->
+        <div class="desktop-modal hidden" id="modal-importar-svg" role="dialog" aria-modal="true">
+            <div class="modal-titlebar">
+                <span>Importar Dibujo Vectorial .SVG (Inkscape / CAD)</span>
+                <button type="button" class="modal-close-btn" onclick="cancelarModal('modal-importar-svg')">X</button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-inline-row">
+                    <label class="btn-action-secondary file-btn" style="flex:1;">
+                        Seleccionar Archivo .SVG...
+                        <input type="file" id="file-import-svg" accept=".svg,image/svg+xml" onchange="cargarArchivoSVG(event)" hidden>
+                    </label>
+                </div>
+                <small class="img-info" id="lbl-svg-filename">Ningun archivo .svg seleccionado (tambien puedes arrastrar y soltar un .svg en la ventana).</small>
+
+                <div class="modal-grid-2">
+                    <div class="param-group">
+                        <label for="select-svg-pos-mode">Escalado y Posicion en Zona Calibrada</label>
+                        <select id="select-svg-pos-mode" class="select-input" onchange="recalcularVistaPreviaSVGModal()">
+                            <option value="centrar_ajustar" selected>Centrar en Zona (Auto-escalar si excede limites)</option>
+                            <option value="origen_recortar">Recortar margenes vacios y ubicar en Origen (0,0)</option>
+                            <option value="documento_original">Respetar posicion de hoja Inkscape (viewBox)</option>
+                        </select>
+                    </div>
+                    <div class="param-group">
+                        <label for="select-svg-group-mode">Agrupacion para Edicion en Estudio</label>
+                        <select id="select-svg-group-mode" class="select-input" onchange="recalcularVistaPreviaSVGModal()">
+                            <option value="unico" selected>1 Objeto Agrupado (Mover / Escalar todo junto)</option>
+                            <option value="capas">Separar por Capas de Inkscape (&lt;g&gt;)</option>
+                            <option value="elementos">Separar cada Trayecto / Figura individual</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="modal-grid-2">
+                    <div class="param-group">
+                        <label for="input-svg-tol">Tolerancia Curvas Bezier / Arcos (De Casteljau)</label>
+                        <div class="num-input-group full">
+                            <input type="number" id="input-svg-tol" value="0.08" min="0.02" max="1.0" step="0.01" onchange="recalcularVistaPreviaSVGModal()">
+                            <span>mm</span>
+                        </div>
+                    </div>
+                    <div class="param-group">
+                        <label for="input-svg-simplify">Simplificacion Douglas-Peucker</label>
+                        <div class="num-input-group full">
+                            <input type="number" id="input-svg-simplify" value="0.04" min="0" max="1.0" step="0.01" onchange="recalcularVistaPreviaSVGModal()">
+                            <span>mm</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal-grid-2">
+                    <label class="inline-check">
+                        <input type="checkbox" id="chk-svg-optimize" checked onchange="recalcularVistaPreviaSVGModal()">
+                        <span>Optimizar orden de trazos (menos viajes)</span>
+                    </label>
+                    <label class="inline-check">
+                        <input type="checkbox" id="chk-svg-fit90" onchange="recalcularVistaPreviaSVGModal()">
+                        <span>Forzar ajuste al 90% de la zona calibrada</span>
+                    </label>
+                    <label class="inline-check">
+                        <input type="checkbox" id="chk-svg-convert-text" checked onchange="recalcularVistaPreviaSVGModal()">
+                        <span>Convertir &lt;text&gt; simple con fuente CNC interna</span>
+                    </label>
+                    <label class="inline-check">
+                        <input type="checkbox" id="chk-svg-hatch-fill" onchange="recalcularVistaPreviaSVGModal()">
+                        <span>Generar relleno lineal (Hatch) en figuras con fill</span>
+                    </label>
+                </div>
+
+                <div class="param-group">
+                    <label for="input-svg-hatch-spacing">Separacion de Relleno Hatch (si esta activo)</label>
+                    <div class="num-input-group full">
+                        <input type="number" id="input-svg-hatch-spacing" value="0.8" min="0.15" max="10.0" step="0.05" onchange="recalcularVistaPreviaSVGModal()">
+                        <span>mm</span>
+                    </div>
+                </div>
+
+                <div class="img-warning hidden" id="svg-import-warning"></div>
+                <div id="svg-import-summary">
+                    <div class="empty-shapes-msg">Selecciona un archivo <b>.svg</b> de Inkscape o software vectorial para analizar sus trayectos.</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn-subtle" onclick="cancelarModal('modal-importar-svg')">Cancelar</button>
+                <button type="button" class="btn-modal-apply" id="btn-svg-modal-apply" onclick="aplicarModal('modal-importar-svg')" disabled>Insertar SVG al Estudio</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- POPOVER FLOTANTE DE INFORMACION POR APARTADO -->
+    <div class="desktop-info-popover hidden" id="desktop-info-popover" role="tooltip">
+        <div class="info-popover-head">
+            <strong id="info-popover-title">Informacion del Apartado</strong>
+        </div>
+        <div class="info-popover-body" id="info-popover-body"></div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/image_trace.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/svg_import.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+{
+    "id": "alta_precision_dibujo_32x",
+    "nombre": "Alta Precision Dibujo 32x (200x150 mm)",
+    "descripcion": "Microstep 32 (6400 P/rev) | 1.5A | ENA AUTO | Zona 200.0x150.0 mm",
+    "fecha_modificacion": "2026-10-28 07:46:56",
+    "switches": {
+        "S1": false,
+        "S2": false,
+        "S3": false,
+        "S4": true,
+        "S5": true,
+        "S6": false
+    },
+    "ena_modo": "AUTO",
+    "velocidad_hz": 2000,
+    "pasos_por_mm": 160.0,
+    "mm_por_rev": 40.0,
+    "limite_fijado": true,
+    "limite_max_x": 32000,
+    "limite_max_y": 24000,
+    "limite_max_z": 6400,
+    "bloquear_limites": true,
+    "puerto": "COM5"
+}

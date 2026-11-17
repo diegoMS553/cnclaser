@@ -1,0 +1,20 @@
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Compressed archives / temp
+*.rar
+*.zip
+*.tar.gz
+*.log
+
+# IDE
+.vscode/
+.idea/

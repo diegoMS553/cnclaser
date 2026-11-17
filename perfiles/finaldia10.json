@@ -1,0 +1,34 @@
+{
+    "id": "finaldia10",
+    "nombre": "FINALDIA10",
+    "descripcion": "Microstep 4 (800 P/rev) | 1.5A | ENA AUTO | Zona 1680.0x1580.0 mm",
+    "fecha_modificacion": "2026-11-10 12:08:55",
+    "switches": {
+        "S1": true,
+        "S2": false,
+        "S3": false,
+        "S4": true,
+        "S5": true,
+        "S6": false
+    },
+    "ena_modo": "AUTO",
+    "invertir_dir": {
+        "X": false,
+        "Y": true,
+        "Z": false
+    },
+    "velocidad_hz": 500,
+    "pasos_por_mm": 20.0,
+    "mm_por_rev": 40.0,
+    "limite_fijado": true,
+    "limite_max_x": 33600,
+    "limite_max_y": 31600,
+    "limite_max_z": -356,
+    "z_home_pulsos": 0,
+    "origen_z_fijado": true,
+    "limite_z_fijado": true,
+    "usar_z_dibujo": true,
+    "autocalibrar_inicio": false,
+    "bloquear_limites": false,
+    "puerto": "COM3"
+}

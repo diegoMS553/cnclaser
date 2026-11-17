@@ -1,0 +1,29 @@
+{
+    "id": "yafin_neta",
+    "nombre": "Yafin neta",
+    "descripcion": "Microstep 16 (3200 P/rev) | 2.0A | ENA AUTO | Zona 105.0x101.9 mm",
+    "fecha_modificacion": "2026-10-28 10:13:40",
+    "switches": {
+        "S1": false,
+        "S2": false,
+        "S3": true,
+        "S4": true,
+        "S5": false,
+        "S6": false
+    },
+    "ena_modo": "AUTO",
+    "invertir_dir": {
+        "X": false,
+        "Y": true,
+        "Z": false
+    },
+    "velocidad_hz": 500,
+    "pasos_por_mm": 80.0,
+    "mm_por_rev": 40.0,
+    "limite_fijado": true,
+    "limite_max_x": 8400,
+    "limite_max_y": 8150,
+    "limite_max_z": 0,
+    "bloquear_limites": false,
+    "puerto": "COM5"
+}

@@ -1,0 +1,24 @@
+{
+    "id": "ding",
+    "nombre": "ding",
+    "descripcion": "Microstep 16 (3200 P/rev) | 2.0A | ENA AUTO | Zona 72.5x52.5 mm",
+    "fecha_modificacion": "2026-10-28 09:07:54",
+    "switches": {
+        "S1": false,
+        "S2": false,
+        "S3": true,
+        "S4": true,
+        "S5": false,
+        "S6": false
+    },
+    "ena_modo": "AUTO",
+    "velocidad_hz": 500,
+    "pasos_por_mm": 80.0,
+    "mm_por_rev": 40.0,
+    "limite_fijado": true,
+    "limite_max_x": -5800,
+    "limite_max_y": 4200,
+    "limite_max_z": 0,
+    "bloquear_limites": true,
+    "puerto": "COM5"
+}

@@ -1,0 +1,29 @@
+{
+    "id": "estacion_estandar_16x",
+    "nombre": "Estacion Estandar 16x (160x120 mm)",
+    "descripcion": "Microstep 16 (3200 P/rev) | 2.0A | ENA AUTO | Zona 160x120 mm",
+    "fecha_modificacion": "2026-10-28 10:00:00",
+    "switches": {
+        "S1": false,
+        "S2": false,
+        "S3": true,
+        "S4": true,
+        "S5": false,
+        "S6": false
+    },
+    "ena_modo": "AUTO",
+    "invertir_dir": {
+        "X": false,
+        "Y": true,
+        "Z": false
+    },
+    "velocidad_hz": 500,
+    "pasos_por_mm": 80.0,
+    "mm_por_rev": 40.0,
+    "limite_fijado": true,
+    "limite_max_x": 12800,
+    "limite_max_y": 9600,
+    "limite_max_z": 3200,
+    "bloquear_limites": false,
+    "puerto": "COM3"
+}

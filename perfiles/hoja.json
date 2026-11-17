@@ -1,0 +1,24 @@
+{
+    "id": "hoja",
+    "nombre": "hoja",
+    "descripcion": "Microstep 16 (3200 P/rev) | 2.0A | ENA AUTO | Zona 76.2x57.5 mm",
+    "fecha_modificacion": "2026-10-28 09:02:23",
+    "switches": {
+        "S1": false,
+        "S2": false,
+        "S3": true,
+        "S4": true,
+        "S5": false,
+        "S6": false
+    },
+    "ena_modo": "AUTO",
+    "velocidad_hz": 500,
+    "pasos_por_mm": 80.0,
+    "mm_por_rev": 40.0,
+    "limite_fijado": true,
+    "limite_max_x": 6100,
+    "limite_max_y": -4600,
+    "limite_max_z": 200,
+    "bloquear_limites": false,
+    "puerto": "COM5"
+}

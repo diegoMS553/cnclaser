@@ -1,0 +1,24 @@
+{
+    "id": "torquefuerte_paso4_800",
+    "nombre": "Torque Alto Paso 4 (120x100 mm)",
+    "descripcion": "Microstep 4 (800 P/rev) | 2.8A | Proteccion ENA AUTO | Zona 120x100 mm",
+    "fecha_modificacion": "2026-10-27 19:36:07",
+    "switches": {
+        "S1": true,
+        "S2": false,
+        "S3": false,
+        "S4": false,
+        "S5": false,
+        "S6": true
+    },
+    "ena_modo": "AUTO",
+    "velocidad_hz": 800,
+    "pasos_por_mm": 20.0,
+    "mm_por_rev": 40.0,
+    "limite_fijado": true,
+    "limite_max_x": 2400,
+    "limite_max_y": 2000,
+    "limite_max_z": 800,
+    "bloquear_limites": true,
+    "puerto": "COM3"
+}
