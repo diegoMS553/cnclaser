@@ -1,5 +1,6 @@
 import os
 import re
+import math
 import json
 import time
 import threading
@@ -43,24 +44,26 @@ TABLA_CORRIENTE = {
 }
 
 # Tabla 3: Presets de Calibración de Materiales para Módulo Láser de Diodo de 5W Ópticos
+# Las frecuencias de grabado están calibradas para garantizar tiempo de exposición térmica continuo
+# en cada paso del motor (sin dejar líneas punteadas ni perder pasos en los motores NEMA).
 PRESETS_LASER_5W = {
     "papel_marcado": {
         "nombre": "Papel / Cartulina (Grabado Fino)",
-        "descripcion": "Marcado superficial de trazos y dibujo vectorial sin perforar el papel.",
+        "descripcion": "Marcado superficial continuo de trazos y dibujo vectorial sin perforar el papel.",
         "modo_operacion": "grabado_linea",
-        "potencia_pct": 18,
-        "velocidad_grabado_hz": 1200,
-        "velocidad_viaje_hz": 2200,
+        "potencia_pct": 35,
+        "velocidad_grabado_hz": 240,
+        "velocidad_viaje_hz": 500,
         "pasadas": 1,
         "spot_mm": 0.12
     },
     "carton_grabado": {
         "nombre": "Carton Corrugado (Grabado Superficial)",
-        "descripcion": "Grabado de alto contraste sobre carton sin atravesar la primera capa.",
+        "descripcion": "Grabado continuo de alto contraste sobre carton sin atravesar la primera capa.",
         "modo_operacion": "grabado_linea",
-        "potencia_pct": 30,
-        "velocidad_grabado_hz": 1000,
-        "velocidad_viaje_hz": 2200,
+        "potencia_pct": 55,
+        "velocidad_grabado_hz": 200,
+        "velocidad_viaje_hz": 500,
         "pasadas": 1,
         "spot_mm": 0.15
     },
@@ -68,19 +71,19 @@ PRESETS_LASER_5W = {
         "nombre": "Carton / Cartulina (Corte 5W)",
         "descripcion": "Corte vectorial en 2 pasadas con alta potencia de 5W.",
         "modo_operacion": "corte",
-        "potencia_pct": 85,
-        "velocidad_grabado_hz": 350,
-        "velocidad_viaje_hz": 2000,
+        "potencia_pct": 90,
+        "velocidad_grabado_hz": 120,
+        "velocidad_viaje_hz": 500,
         "pasadas": 2,
         "spot_mm": 0.15
     },
     "madera_grabado_fino": {
         "nombre": "Madera Balsa / Triplay Claro (Grabado)",
-        "descripcion": "Grabado nitido de trazos, bocetos y texto sobre madera clara.",
+        "descripcion": "Grabado continuo y nitido de trazos, bocetos y texto sobre madera clara.",
         "modo_operacion": "grabado_linea",
-        "potencia_pct": 35,
-        "velocidad_grabado_hz": 900,
-        "velocidad_viaje_hz": 2200,
+        "potencia_pct": 65,
+        "velocidad_grabado_hz": 180,
+        "velocidad_viaje_hz": 500,
         "pasadas": 1,
         "spot_mm": 0.15
     },
@@ -88,39 +91,39 @@ PRESETS_LASER_5W = {
         "nombre": "MDF / Madera Dura (Grabado Oscuro)",
         "descripcion": "Grabado oscuro con mayor penetracion termica en MDF y pino.",
         "modo_operacion": "grabado_relleno",
-        "potencia_pct": 60,
-        "velocidad_grabado_hz": 600,
-        "velocidad_viaje_hz": 2000,
+        "potencia_pct": 85,
+        "velocidad_grabado_hz": 130,
+        "velocidad_viaje_hz": 500,
         "pasadas": 1,
         "spot_mm": 0.15
     },
     "madera_fotograbado": {
         "nombre": "Madera Clara (Fotograbado Dithering 5W)",
-        "descripcion": "Optimizado para imagenes procesadas con Dithering o Line2Line estilo LaserGRBL.",
+        "descripcion": "Optimizado para imagenes procesadas con Dithering, Raster PWM o Line2Line.",
         "modo_operacion": "grabado_tonal",
-        "potencia_pct": 42,
-        "velocidad_grabado_hz": 1000,
-        "velocidad_viaje_hz": 2400,
+        "potencia_pct": 70,
+        "velocidad_grabado_hz": 180,
+        "velocidad_viaje_hz": 500,
         "pasadas": 1,
         "spot_mm": 0.15
     },
     "madera_corte_balsa_3mm": {
         "nombre": "Madera Balsa / Triplay 2-3 mm (Corte 5W)",
-        "descripcion": "Corte multipaso a 4.75W para balsa y triplay ligero.",
+        "descripcion": "Corte multipaso a maxima potencia para balsa y triplay ligero.",
         "modo_operacion": "corte",
-        "potencia_pct": 95,
-        "velocidad_grabado_hz": 220,
-        "velocidad_viaje_hz": 2000,
+        "potencia_pct": 100,
+        "velocidad_grabado_hz": 100,
+        "velocidad_viaje_hz": 500,
         "pasadas": 3,
         "spot_mm": 0.15
     },
     "cuero_grabado": {
         "nombre": "Cuero / Piel Sintetica (Grabado)",
-        "descripcion": "Marcado limpio en cuero natural o sintetico a potencia controlada.",
+        "descripcion": "Marcado continuo y limpio en cuero natural o sintetico a potencia controlada.",
         "modo_operacion": "grabado_relleno",
-        "potencia_pct": 28,
-        "velocidad_grabado_hz": 950,
-        "velocidad_viaje_hz": 2200,
+        "potencia_pct": 50,
+        "velocidad_grabado_hz": 200,
+        "velocidad_viaje_hz": 500,
         "pasadas": 1,
         "spot_mm": 0.15
     },
@@ -128,9 +131,9 @@ PRESETS_LASER_5W = {
         "nombre": "Acrilico Negro / Opaco (Grabado)",
         "descripcion": "Grabado superficial mate en acrilico oscuro opaco (no transparente).",
         "modo_operacion": "grabado_relleno",
-        "potencia_pct": 45,
-        "velocidad_grabado_hz": 750,
-        "velocidad_viaje_hz": 2200,
+        "potencia_pct": 75,
+        "velocidad_grabado_hz": 150,
+        "velocidad_viaje_hz": 500,
         "pasadas": 1,
         "spot_mm": 0.15
     }
@@ -159,6 +162,7 @@ estado_maquina = {
     "origen_z_fijado": True,
     "limite_z_fijado": True,
     "usar_z_dibujo": False,
+    "firmware_b2d": True,
     "modo_herramienta": "dibujo",  # "dibujo" (Pluma/Plumon con Eje Z) o "laser" (Modulo Laser Diodo 5W PWM)
     "laser": {
         "instalado": True,
@@ -172,9 +176,9 @@ estado_maquina = {
         "modo_operacion": "grabado_linea",  # "grabado_linea", "grabado_relleno", "grabado_tonal", "corte"
         "preset_material": "madera_grabado_fino",
         "material_preset": "madera_grabado_fino",
-        "potencia_pct": 35.0,         # 0..100 %
-        "potencia_pwm": 89,           # 0..255 (8-bit PWM)
-        "potencia_watts": 1.75,       # Potencia optica efectiva estimada sobre 5.0W
+        "potencia_pct": 65.0,         # 0..100 %
+        "potencia_pwm": 166,          # 0..255 (8-bit PWM)
+        "potencia_watts": 3.25,       # Potencia optica efectiva estimada sobre 5.0W
         "potencia_foco_pct": 3.0,     # 1..12 % para enfoque sin quemar
         "potencia_foco_pwm": 8,
         "potencia_manual_pct": 25.0,  # 0..100 % para el panel de Control Manual del Laser 5W
@@ -185,8 +189,8 @@ estado_maquina = {
         "potencia_prueba_pct": 20.0,
         "pulso_prueba_ms": 250,
         "duracion_pulso_ms": 250,
-        "velocidad_grabado_hz": 900,  # Frecuencia en pulsos/s durante quemado laser
-        "velocidad_viaje_hz": 2200,   # Frecuencia en pulsos/s en desplazamientos con laser apagado (0W)
+        "velocidad_grabado_hz": 180,  # Frecuencia sincronizada en pulsos/s durante quemado laser (~5.5 ms por paso)
+        "velocidad_viaje_hz": 500,    # Frecuencia segura en pulsos/s en desplazamientos en vacio (0W)
         "pasadas": 1,                 # Pasadas por trazo (1..20)
         "pausa_enfriamiento_ms": 0,
         "spot_mm": 0.15,              # Diametro del punto optico enfocado (mm)
@@ -194,6 +198,10 @@ estado_maquina = {
         "z_foco_fijado": True,
         "usar_z_foco": False,         # Si es True, posiciona Z en z_foco_pulsos antes de iniciar el trabajo laser
         "z_paso_pasada_pulsos": 0,    # Descenso Z adicional por cada pasada en modo corte
+        "compensacion_diagonal": True,# Velocidad lineal euclidiana constante en todos los angulos (evita trazos delgados a 45 deg)
+        "balance_haz_xy_pct": 0.0,    # Balance entre ejes X/Y (-35..+35 %) por haz rectangular del diodo 450nm
+        "proteccion_esquinas": True,  # Atenuacion termica progresiva en esquinas cerradas y trazos cercanos
+        "evitar_doble_quemado": True, # Omite segmentos duplicados o superpuestos en la misma pasada
         "frecuencia_pwm_hz": 5000,
         "pwm_actual": 0,
         "watts_actuales": 0.0
@@ -220,6 +228,10 @@ estado_maquina = {
         "Y": True,
         "Z": False
     },
+    # Intercambio de ejes X e Y si el cableado fisico del motor X va al driver Y y viceversa
+    "intercambiar_xy": False,
+    # Limites duros (hard limits) durante grabado/dibujo: desactivados por defecto para inmunidad al ruido EMI
+    "hard_limits_activos": False,
     "autocalibrar_inicio": True,
     "endstops": {
         "X": True,
@@ -384,6 +396,8 @@ def construir_objeto_perfil(id_perfil, nombre_perfil, descripcion=""):
         "switches": dict(estado_maquina["switches"]),
         "ena_modo": estado_maquina["ena"]["modo"],
         "invertir_dir": dict(estado_maquina["invertir_dir"]),
+        "intercambiar_xy": bool(estado_maquina.get("intercambiar_xy", False)),
+        "hard_limits_activos": bool(estado_maquina.get("hard_limits_activos", False)),
         "velocidad_hz": int(estado_maquina["velocidad_hz"]),
         "pasos_por_mm": float(estado_maquina["pasos_por_mm"]),
         "mm_por_rev": float(estado_maquina["mm_por_rev"]),
@@ -448,6 +462,7 @@ def aplicar_datos_perfil_a_maquina(datos):
     if "velocidad_hz" in datos:
         try:
             estado_maquina["velocidad_hz"] = max(50, min(20000, int(float(datos["velocidad_hz"]))))
+            enviar_comando_raw_serial(f"SPEED,{estado_maquina['velocidad_hz']}")
         except (ValueError, TypeError):
             pass
 
@@ -487,10 +502,16 @@ def aplicar_datos_perfil_a_maquina(datos):
         for k_lsr in (
             "modo_operacion", "material_preset", "potencia_pct", "potencia_foco_pct",
             "velocidad_grabado_hz", "velocidad_viaje_hz", "pasadas", "spot_mm",
-            "z_foco_pulsos", "usar_z_foco", "z_paso_pasada_pulsos", "duracion_pulso_ms"
+            "z_foco_pulsos", "usar_z_foco", "z_paso_pasada_pulsos", "duracion_pulso_ms",
+            "compensacion_diagonal", "balance_haz_xy_pct", "proteccion_esquinas", "evitar_doble_quemado"
         ):
             if k_lsr in datos["laser"]:
                 estado_maquina["laser"][k_lsr] = datos["laser"][k_lsr]
+        # Migrar valores antiguos no calibrados (>= 600 Hz) que no daban tiempo de quemar
+        if int(estado_maquina["laser"].get("velocidad_grabado_hz", 180)) >= 600:
+            estado_maquina["laser"]["velocidad_grabado_hz"] = 180
+        if int(estado_maquina["laser"].get("velocidad_viaje_hz", 500)) > 800:
+            estado_maquina["laser"]["velocidad_viaje_hz"] = 500
         recalcular_metricas_laser()
     if "autocalibrar_inicio" in datos:
         estado_maquina["autocalibrar_inicio"] = bool(datos["autocalibrar_inicio"])
@@ -499,6 +520,13 @@ def aplicar_datos_perfil_a_maquina(datos):
         for k in ("X", "Y", "Z"):
             if k in datos["invertir_dir"]:
                 estado_maquina["invertir_dir"][k] = bool(datos["invertir_dir"][k])
+
+    if "intercambiar_xy" in datos:
+        estado_maquina["intercambiar_xy"] = bool(datos["intercambiar_xy"])
+
+    if "hard_limits_activos" in datos:
+        estado_maquina["hard_limits_activos"] = bool(datos["hard_limits_activos"])
+        enviar_comando_raw_serial(f"LIMITS,{1 if estado_maquina['hard_limits_activos'] else 0}")
 
     if "calibracion" in datos and isinstance(datos["calibracion"], dict):
         cal = datos["calibracion"]
@@ -670,10 +698,18 @@ def sincronizar_perfil_inicial():
         estado_maquina["bloquear_limites"] = False
 
 
+_cache_puertos_com = {"ts": 0.0, "lista": [PUERTO_DEFECTO]}
+
+
 def listar_puertos_com():
+    ahora = time.time()
+    if ahora - _cache_puertos_com["ts"] < 2.5 and _cache_puertos_com["lista"]:
+        return _cache_puertos_com["lista"]
     puertos = [p.device for p in serial.tools.list_ports.comports()]
     if not puertos:
         puertos = [PUERTO_DEFECTO]
+    _cache_puertos_com["ts"] = ahora
+    _cache_puertos_com["lista"] = puertos
     return puertos
 
 
@@ -692,7 +728,7 @@ def enviar_comando_raw_serial(comando_str):
                     resp = puerto_serial.readline().decode("utf-8", errors="ignore").strip()
                     if resp.startswith("OK"):
                         return True, resp
-                time.sleep(0.01)
+                time.sleep(0.002)
             return True, "Enviado"
         except Exception as e:
             return False, str(e)
@@ -712,7 +748,7 @@ def intentar_conexion_serial(puerto, silencioso=False):
             estado_maquina["conectado"] = True
             estado_maquina["modo_simulacion"] = False
             estado_maquina["puerto"] = puerto
-            estado_maquina["firmware_b2d"] = None
+            estado_maquina["firmware_b2d"] = True
             estado_maquina["error_puerto"] = None
             estado_maquina["ultimo_mensaje"] = f"Conectado exitosamente a {puerto} ({BAUD_RATE} baudios)"
             return True, estado_maquina["ultimo_mensaje"]
@@ -729,22 +765,29 @@ def intentar_conexion_serial(puerto, silencioso=False):
 
 def enviar_por_serial(eje, pasos, dir_int, duracion_esperada):
     """
-    Envía comando EJE,PASOS,DIR al ESP32 aplicando la inversión cinemática de dirección
-    (ej. placa móvil en Y con puente fijo en X) y espera confirmación real 'OK'.
+    Envía comando EJE,PASOS,DIR al ESP32 aplicando intercambio de ejes si aplica
+    y la inversión cinemática de dirección (ej. placa móvil en Y con puente fijo en X).
     """
     global puerto_serial
-    invertido = bool(estado_maquina.get("invertir_dir", {}).get(eje, False))
+    eje_fisico = eje
+    if estado_maquina.get("intercambiar_xy", False):
+        if eje == "X":
+            eje_fisico = "Y"
+        elif eje == "Y":
+            eje_fisico = "X"
+
+    invertido = bool(estado_maquina.get("invertir_dir", {}).get(eje_fisico, False))
     dir_fisico = (0 if dir_int == 1 else 1) if invertido else dir_int
 
     if estado_maquina["modo_simulacion"]:
-        return True, f"Simulado (DIR físico={dir_fisico})"
+        return True, f"Simulado (Eje físico={eje_fisico}, DIR físico={dir_fisico})"
 
     if not puerto_serial or not puerto_serial.is_open:
         return False, f"Error: El puerto {estado_maquina['puerto']} no está conectado. Activa Simulación o conecta el hardware."
 
     with serial_lock:
         try:
-            comando = f"{eje},{pasos},{dir_fisico}\n"
+            comando = f"{eje_fisico},{pasos},{dir_fisico}\n"
             puerto_serial.reset_input_buffer()
             puerto_serial.write(comando.encode("utf-8"))
 
@@ -757,7 +800,7 @@ def enviar_por_serial(eje, pasos, dir_int, duracion_esperada):
                         return True, respuesta
                     elif respuesta.startswith("ERR"):
                         return False, f"Error reportado por el motor: {respuesta}"
-                time.sleep(0.015)
+                time.sleep(0.002)
 
             estado_maquina["posicion_sincronizada"] = False
             return False, f"Tiempo de espera agotado ({timeout_max:.1f}s) sin recibir confirmación 'OK' del motor en {eje}."
@@ -779,48 +822,57 @@ def _esperar_ok_serial_bloqueado(timeout_max):
                 return True, respuesta
             elif respuesta.startswith("ERR"):
                 return False, f"Error reportado por el motor: {respuesta}"
-        time.sleep(0.01)
+        time.sleep(0.002)
     return False, f"Tiempo de espera agotado ({timeout_max:.1f}s) sin recibir confirmación 'OK' del ESP32."
 
 
 def _verificar_soporte_b2d_bloqueado():
-    """Consulta STATUS al ESP32 para saber si tiene cargado el firmware con interpolación simultánea M2 (B2D:1)."""
-    if estado_maquina.get("firmware_b2d") is not None:
-        return bool(estado_maquina["firmware_b2d"])
-    try:
-        puerto_serial.reset_input_buffer()
-        puerto_serial.write(b"STATUS\n")
-        inicio = time.time()
-        while time.time() - inicio < 0.35:
-            if puerto_serial.in_waiting > 0:
-                resp = puerto_serial.readline().decode("utf-8", errors="ignore").strip()
-                if resp.startswith("OK"):
-                    soporta = ("B2D:1" in resp)
-                    estado_maquina["firmware_b2d"] = soporta
-                    return soporta
-            time.sleep(0.01)
-    except Exception:
-        pass
-    estado_maquina["firmware_b2d"] = False
-    return False
+    """El firmware ESP32 soporta interpolación simultánea M2 y M2L (B2D:1) de forma nativa."""
+    estado_maquina["firmware_b2d"] = True
+    return True
 
 
 def enviar_interpolacion_xy_serial(pasos_x, dir_x, pasos_y, dir_y, duracion_esperada, pwm_laser=None, vel_hz=None):
     """
     Mueve los ejes X e Y de forma simultánea (Interpolación Lineal 2D Bresenham):
-    - Si pwm_laser no es None (Modo Laser 5W activo), usa 'M2L,pasosX,dirX,pasosY,dirY,pwm,delayUs'
-      para encender/modular el laser de 5W de forma sincronizada durante el desplazamiento y apagarlo al concluir.
-    - Si un eje tiene 0 pasos y no hay laser activo, mueve únicamente el eje activo.
-    - Si el ESP32 cuenta con el comando M2 (B2D:1), envía 'M2,pasosX,dirX,pasosY,dirY' para pulso simultáneo en el mismo ciclo.
+    - Si pwm_laser > 0 (Modo Laser 5W activo), usa 'M2L,pasosX,dirX,pasosY,dirY,pwm,delayUs'
+      para encender/modular el laser de 5W en sincronía exacta con cada paso del motor y apagarlo
+      al concluir el segmento, garantizando tiempo térmico suficiente para quemado continuo sin puntos.
+    - Si no hay laser activo (viaje en vacío 0W o Modo Dibujo), usa la misma rutina de movimiento de dibujo.
     """
     global puerto_serial
     if pasos_x <= 0 and pasos_y <= 0:
         return True, "Sin desplazamiento"
 
-    usar_modo_laser = pwm_laser is not None
-    pwm_seg = max(0, min(255, int(pwm_laser))) if usar_modo_laser else 0
-    hz_activo = max(50, min(10000, int(vel_hz or estado_maquina.get("velocidad_hz", 500))))
-    delay_us = max(50, min(10000, int(500000 // hz_activo)))
+    usar_modo_laser = (pwm_laser is not None) and (int(pwm_laser) > 0)
+    pwm_seg = max(0, min(255, int(pwm_laser))) if (pwm_laser is not None) else 0
+
+    if usar_modo_laser:
+        lsr = estado_maquina.get("laser", {})
+        hz_base = int(vel_hz or lsr.get("velocidad_grabado_hz", 180))
+        if hz_base >= 600:
+            hz_base = 180
+        hz_activo = max(25, min(500, hz_base))
+
+        # Compensacion diagonal euclidiana: mantiene la velocidad lineal mm/s constante en todo angulo
+        # (sin esto, las diagonales a 45 deg avanzan 41.4% mas rapido y queman mas delgado que H/V).
+        pasos_dom = max(pasos_x, pasos_y)
+        dist_euc = math.hypot(pasos_x, pasos_y)
+        k_diag = (dist_euc / float(pasos_dom)) if (pasos_dom > 0 and lsr.get("compensacion_diagonal", True)) else 1.0
+        delay_us = int(round((500000.0 / float(hz_activo)) * k_diag))
+        delay_us = max(1000, min(20000, delay_us))
+
+        # Balance anisotropico de haz X/Y (diodo 450nm con emisor rectangular):
+        # bal_pct > 0 atenua movimientos en Y; bal_pct < 0 atenua movimientos en X.
+        bal_pct = max(-35.0, min(35.0, float(lsr.get("balance_haz_xy_pct", 0.0))))
+        if abs(bal_pct) > 0.1 and dist_euc > 0:
+            cos2 = (pasos_x * pasos_x) / (dist_euc * dist_euc)
+            sin2 = (pasos_y * pasos_y) / (dist_euc * dist_euc)
+            factor_haz = (1.0 - (bal_pct / 100.0) * sin2) if bal_pct > 0 else (1.0 - (abs(bal_pct) / 100.0) * cos2)
+            pwm_seg = max(1, min(255, int(round(pwm_seg * factor_haz))))
+    else:
+        hz_activo = max(50, min(4000, int(vel_hz or estado_maquina.get("velocidad_hz", 500))))
+        delay_us = max(125, min(10000, int(500000 // hz_activo)))
 
     if not usar_modo_laser:
         if pasos_y <= 0:
@@ -828,75 +880,41 @@ def enviar_interpolacion_xy_serial(pasos_x, dir_x, pasos_y, dir_y, duracion_espe
         if pasos_x <= 0:
             return enviar_por_serial("Y", pasos_y, dir_y, duracion_esperada)
 
+    swapped = bool(estado_maquina.get("intercambiar_xy", False))
+    if swapped:
+        px_fis, dx_fis = pasos_y, dir_y
+        py_fis, dy_fis = pasos_x, dir_x
+    else:
+        px_fis, dx_fis = pasos_x, dir_x
+        py_fis, dy_fis = pasos_y, dir_y
+
     inv_x = bool(estado_maquina.get("invertir_dir", {}).get("X", False))
     inv_y = bool(estado_maquina.get("invertir_dir", {}).get("Y", False))
-    dir_fis_x = (0 if dir_x == 1 else 1) if inv_x else dir_x
-    dir_fis_y = (0 if dir_y == 1 else 1) if inv_y else dir_y
+    dir_fis_x = (0 if dx_fis == 1 else 1) if inv_x else dx_fis
+    dir_fis_y = (0 if dy_fis == 1 else 1) if inv_y else dy_fis
 
     if estado_maquina["modo_simulacion"]:
         if usar_modo_laser:
-            return True, f"Simulado 2D + Laser 5W (PWM={pwm_seg}/255, Vel={hz_activo}Hz)"
-        return True, f"Simulado 2D Simultáneo (DIR_X={dir_fis_x}, DIR_Y={dir_fis_y})"
+            return True, f"Simulado 2D + Laser 5W Sincronizado (PWM={pwm_seg}/255, Delay={delay_us}us, Swap={swapped})"
+        return True, f"Simulado 2D Simultáneo (DIR_X={dir_fis_x}, DIR_Y={dir_fis_y}, Swap={swapped})"
 
     if not puerto_serial or not puerto_serial.is_open:
         return False, f"Error: El puerto {estado_maquina['puerto']} no está conectado. Activa Simulación o conecta el hardware."
 
     with serial_lock:
         try:
-            timeout_max = max(6.0, duracion_esperada * 12)
-            if _verificar_soporte_b2d_bloqueado():
-                if usar_modo_laser:
-                    comando = f"M2L,{pasos_x},{dir_fis_x},{pasos_y},{dir_fis_y},{pwm_seg},{delay_us}\n"
-                else:
-                    comando = f"M2,{pasos_x},{dir_fis_x},{pasos_y},{dir_fis_y}\n"
-                puerto_serial.reset_input_buffer()
-                puerto_serial.write(comando.encode("utf-8"))
-                ok, resp = _esperar_ok_serial_bloqueado(timeout_max)
-                if not ok:
-                    estado_maquina["posicion_sincronizada"] = False
-                return ok, resp
-
-            # Respaldo automático de micro-escalonado Bresenham para sketch anterior sin M2:
-            if usar_modo_laser and pwm_seg > 0:
-                puerto_serial.write(f"LASER,PWR,{pwm_seg}\n".encode("utf-8"))
-                _esperar_ok_serial_bloqueado(0.5)
-
-            max_p = max(pasos_x, pasos_y)
-            segmentos = max(1, min(60, max_p // 25))
-            acum_x = 0
-            acum_y = 0
-            for i in range(1, segmentos + 1):
-                meta_x = int(round((pasos_x * i) / float(segmentos)))
-                meta_y = int(round((pasos_y * i) / float(segmentos)))
-                sub_x = meta_x - acum_x
-                sub_y = meta_y - acum_y
-                acum_x = meta_x
-                acum_y = meta_y
-
-                if sub_x > 0:
-                    puerto_serial.reset_input_buffer()
-                    puerto_serial.write(f"X,{sub_x},{dir_fis_x}\n".encode("utf-8"))
-                    ok_x, resp_x = _esperar_ok_serial_bloqueado(max(3.0, timeout_max / segmentos + 2.0))
-                    if not ok_x:
-                        if usar_modo_laser:
-                            puerto_serial.write(b"LASER,OFF\n")
-                        estado_maquina["posicion_sincronizada"] = False
-                        return False, resp_x
-                if sub_y > 0:
-                    puerto_serial.reset_input_buffer()
-                    puerto_serial.write(f"Y,{sub_y},{dir_fis_y}\n".encode("utf-8"))
-                    ok_y, resp_y = _esperar_ok_serial_bloqueado(max(3.0, timeout_max / segmentos + 2.0))
-                    if not ok_y:
-                        if usar_modo_laser:
-                            puerto_serial.write(b"LASER,OFF\n")
-                        estado_maquina["posicion_sincronizada"] = False
-                        return False, resp_y
-
-            if usar_modo_laser and pwm_seg > 0:
-                puerto_serial.write(b"LASER,OFF\n")
-                _esperar_ok_serial_bloqueado(0.5)
-
-            return True, "OK (Interpolación 2D completada)"
+            duracion_real_seg = (max(px_fis, py_fis) * 2.0 * delay_us) / 1000000.0
+            timeout_max = max(6.0, duracion_esperada * 12, duracion_real_seg * 4.0 + 5.0)
+            if usar_modo_laser:
+                comando = f"M2L,{px_fis},{dir_fis_x},{py_fis},{dir_fis_y},{pwm_seg},{delay_us}\n"
+            else:
+                comando = f"M2,{px_fis},{dir_fis_x},{py_fis},{dir_fis_y}\n"
+            puerto_serial.reset_input_buffer()
+            puerto_serial.write(comando.encode("utf-8"))
+            ok, resp = _esperar_ok_serial_bloqueado(timeout_max)
+            if not ok:
+                estado_maquina["posicion_sincronizada"] = False
+            return ok, resp
         except Exception as e:
             estado_maquina["conectado"] = False
             estado_maquina["modo_simulacion"] = True
@@ -1450,16 +1468,22 @@ def api_move():
                 msg = f"Protección de límite Y: El destino ({dest_y}) sale del rango permitido [{min_y}, {max_y}] pulsos."
                 estado_maquina["ultimo_mensaje"] = msg
                 return jsonify(construir_respuesta_estado(ok=False, error=msg))
-        if eje == "Z" and estado_maquina.get("limite_z_fijado") and estado_maquina.get("limite_max_z", 0) != estado_maquina.get("z_home_pulsos", 0):
-            zh = int(estado_maquina.get("z_home_pulsos", 0))
-            zm = int(estado_maquina.get("limite_max_z", 0))
-            min_z, max_z = min(zh, zm), max(zh, zm)
-            if not (min_z <= dest_z <= max_z):
-                acercandose_z = (prev_z < min_z and dest_z > prev_z) or (prev_z > max_z and dest_z < prev_z)
-                if not acercandose_z:
-                    msg = f"Protección de límite Z: El destino ({dest_z}) sale del rango calibrado [{min_z}, {max_z}] pulsos (Home Z a Contacto Papel)."
+        if eje == "Z":
+            if estado_maquina.get("modo_herramienta") == "laser" or bool(data.get("libre_foco_z", False)):
+                if abs(dest_z) > 50000:
+                    msg = f"Protección de límite Z: El destino ({dest_z}) excede el rango maximo de seguridad de 50,000 pulsos."
                     estado_maquina["ultimo_mensaje"] = msg
                     return jsonify(construir_respuesta_estado(ok=False, error=msg))
+            elif estado_maquina.get("limite_z_fijado") and estado_maquina.get("limite_max_z", 0) != estado_maquina.get("z_home_pulsos", 0):
+                zh = int(estado_maquina.get("z_home_pulsos", 0))
+                zm = int(estado_maquina.get("limite_max_z", 0))
+                min_z, max_z = min(zh, zm), max(zh, zm)
+                if not (min_z <= dest_z <= max_z):
+                    acercandose_z = (prev_z < min_z and dest_z > prev_z) or (prev_z > max_z and dest_z < prev_z)
+                    if not acercandose_z:
+                        msg = f"Protección de límite Z: El destino ({dest_z}) sale del rango calibrado [{min_z}, {max_z}] pulsos (Home Z a Contacto Papel)."
+                        estado_maquina["ultimo_mensaje"] = msg
+                        return jsonify(construir_respuesta_estado(ok=False, error=msg))
 
     vel_hz = max(50, int(estado_maquina.get("velocidad_hz", 1000)))
     duracion_seg = round(pasos / float(vel_hz), 3)
@@ -1636,19 +1660,28 @@ def api_move_xy():
                 return jsonify(construir_respuesta_estado(ok=False, error=msg))
             pwm_laser = max(1, min(255, int(round(float(data.get("laser_pwm", lsr.get("potencia_pwm", 97)))))))
         else:
-            pwm_laser = 0
+            pwm_laser = None
 
     if "velocidad_hz" in data:
-        vel_hz = max(50, min(10000, int(round(float(data["velocidad_hz"])))))
+        vel_hz = max(25, min(10000, int(round(float(data["velocidad_hz"])))))
     elif pwm_laser is not None:
         vel_hz = int(lsr["velocidad_grabado_hz"] if pwm_laser > 0 else lsr["velocidad_viaje_hz"])
-        vel_hz = max(50, min(10000, vel_hz))
+        vel_hz = max(25, min(10000, vel_hz))
     else:
         vel_hz = max(50, int(estado_maquina.get("velocidad_hz", 500)))
 
+    if pwm_laser is not None and pwm_laser > 0:
+        if vel_hz >= 600:
+            vel_hz = 180
+        vel_hz = max(25, min(500, vel_hz))
+
     pasos_dominantes = max(pasos_x, pasos_y)
-    duracion_seg = round(pasos_dominantes / float(vel_hz), 3)
-    duracion_anim_ms = int(max(90, min(15000, duracion_seg * 1000)))
+    if pwm_laser is not None and pwm_laser > 0 and lsr.get("compensacion_diagonal", True):
+        dist_euc = math.hypot(pasos_x, pasos_y)
+        duracion_seg = round(dist_euc / float(vel_hz), 3)
+    else:
+        duracion_seg = round(pasos_dominantes / float(vel_hz), 3)
+    duracion_anim_ms = int(max(40, min(25000, duracion_seg * 1000)))
 
     exito_serial, msg_serial = enviar_interpolacion_xy_serial(
         pasos_x, dir_x, pasos_y, dir_y, duracion_seg,
@@ -1822,11 +1855,49 @@ def api_calibrate():
             actual = bool(estado_maquina["invertir_dir"].get(eje, False))
             nuevo = bool(data["invertir"]) if "invertir" in data else (not actual)
             estado_maquina["invertir_dir"][eje] = nuevo
-            estado_txt = "INVERTIDO (Placa Móvil)" if nuevo else "NORMAL (Directo)"
+            estado_txt = "INVERTIDO" if nuevo else "NORMAL"
             estado_maquina["ultimo_mensaje"] = (
                 f"Sentido de giro físico DIR del Eje {eje} configurado en modo {estado_txt}. "
-                f"Home (0,0) se mantiene en la esquina inferior izquierda."
+                f"Home (0,0) en esquina inferior izquierda."
             )
+            # Persistir en perfil activo si existe
+            if estado_maquina.get("perfil_activo"):
+                try:
+                    ruta_p = os.path.join(CARPETA_PERFILES, f"{estado_maquina['perfil_activo']}.json")
+                    if os.path.exists(ruta_p):
+                        with open(ruta_p, "r", encoding="utf-8") as fh:
+                            pdata = json.load(fh)
+                        pdata["invertir_dir"] = dict(estado_maquina["invertir_dir"])
+                        with open(ruta_p, "w", encoding="utf-8") as fh:
+                            json.dump(pdata, fh, indent=4, ensure_ascii=False)
+                except Exception:
+                    pass
+
+    elif accion == "intercambiar_ejes_xy":
+        actual = bool(estado_maquina.get("intercambiar_xy", False))
+        nuevo = bool(data["intercambiar"]) if "intercambiar" in data else (not actual)
+        estado_maquina["intercambiar_xy"] = nuevo
+        txt = "INTERCAMBIADOS (X=Mesa móvil, Y=Puente)" if nuevo else "ESTÁNDAR (X=Puente fijo, Y=Placa móvil)"
+        estado_maquina["ultimo_mensaje"] = f"Mapeo de Cinemática XY: {txt}."
+        if estado_maquina.get("perfil_activo"):
+            try:
+                ruta_p = os.path.join(CARPETA_PERFILES, f"{estado_maquina['perfil_activo']}.json")
+                if os.path.exists(ruta_p):
+                    with open(ruta_p, "r", encoding="utf-8") as fh:
+                        pdata = json.load(fh)
+                    pdata["intercambiar_xy"] = nuevo
+                    with open(ruta_p, "w", encoding="utf-8") as fh:
+                        json.dump(pdata, fh, indent=4, ensure_ascii=False)
+            except Exception:
+                pass
+
+    elif accion == "configurar_hard_limits":
+        activar = bool(data.get("activar", not estado_maquina.get("hard_limits_activos", False)))
+        estado_maquina["hard_limits_activos"] = activar
+        enviar_comando_raw_serial(f"LIMITS,{1 if activar else 0}")
+        estado_maquina["ultimo_mensaje"] = (
+            f"Protección Hard Limits en movimiento: {'ACTIVADA (Detiene pasos si toca switch)' if activar else 'DESACTIVADA (Modo seguro contra ruido EMI para grabado laser)'}."
+        )
 
     elif accion == "definir_dimensiones_mm":
         escala = max(0.01, float(estado_maquina["pasos_por_mm"]))
@@ -2072,6 +2143,33 @@ def api_laser():
             )
         return jsonify(construir_respuesta_estado(ok=True))
 
+    if accion in ("pwr", "set_pwm", "potencia"):
+        pwm_val = int(data.get("pwm", 0))
+        pwm_val = max(0, min(255, pwm_val))
+        if pwm_val <= 0:
+            lsr["activo"] = False
+            lsr["emitiendo"] = False
+            lsr["en_foco"] = False
+            lsr["emision_manual_continua"] = False
+            lsr["pwm_actual"] = 0
+            lsr["watts_actuales"] = 0.0
+            lsr["modo_emision"] = "OFF"
+            enviar_comando_raw_serial("LASER,OFF")
+            return jsonify(construir_respuesta_estado(ok=True, pwm=0))
+        else:
+            if not lsr.get("armado", False):
+                enviar_comando_raw_serial("LASER,OFF")
+                return jsonify(construir_respuesta_estado(ok=True, pwm=0, aviso="Simulación en seco: Laser no armado"))
+            lsr["activo"] = True
+            lsr["emitiendo"] = True
+            lsr["en_foco"] = False
+            lsr["pwm_actual"] = pwm_val
+            lsr["watts_actuales"] = round((pwm_val / 255.0) * 5.0, 2)
+            lsr["modo_emision"] = "TRABAJO"
+            enviar_comando_raw_serial("LASER,ARM,1")
+            enviar_comando_raw_serial(f"LASER,PWR,{pwm_val}")
+            return jsonify(construir_respuesta_estado(ok=True, pwm=pwm_val))
+
     if accion == "armar":
         armar = bool(data.get("armado", not lsr["armado"]))
         lsr["armado"] = armar
@@ -2316,12 +2414,18 @@ def api_laser():
             pass
     if "velocidad_grabado_hz" in data:
         try:
-            lsr["velocidad_grabado_hz"] = max(50, min(10000, int(round(float(data["velocidad_grabado_hz"])))))
+            vg_in = int(round(float(data["velocidad_grabado_hz"])))
+            if vg_in >= 600:
+                vg_in = 180
+            lsr["velocidad_grabado_hz"] = max(25, min(500, vg_in))
         except (ValueError, TypeError):
             pass
     if "velocidad_viaje_hz" in data:
         try:
-            lsr["velocidad_viaje_hz"] = max(100, min(12000, int(round(float(data["velocidad_viaje_hz"])))))
+            vv_in = int(round(float(data["velocidad_viaje_hz"])))
+            if vv_in > 1500:
+                vv_in = 500
+            lsr["velocidad_viaje_hz"] = max(100, min(1500, vv_in))
         except (ValueError, TypeError):
             pass
     if "pasadas" in data:
@@ -2348,9 +2452,20 @@ def api_laser():
         lsr["usar_z_foco"] = bool(data["usar_z_foco"])
     if "z_paso_pasada_pulsos" in data:
         try:
-            lsr["z_paso_pasada_pulsos"] = max(0, min(2000, int(round(float(data["z_paso_pasada_pulsos"])))))
+            lsr["z_paso_pasada_pulsos"] = max(-2000, min(2000, int(round(float(data["z_paso_pasada_pulsos"])))))
         except (ValueError, TypeError):
             pass
+    if "compensacion_diagonal" in data:
+        lsr["compensacion_diagonal"] = bool(data["compensacion_diagonal"])
+    if "balance_haz_xy_pct" in data:
+        try:
+            lsr["balance_haz_xy_pct"] = max(-35.0, min(35.0, round(float(data["balance_haz_xy_pct"]), 1)))
+        except (ValueError, TypeError):
+            pass
+    if "proteccion_esquinas" in data:
+        lsr["proteccion_esquinas"] = bool(data["proteccion_esquinas"])
+    if "evitar_doble_quemado" in data:
+        lsr["evitar_doble_quemado"] = bool(data["evitar_doble_quemado"])
 
     recalcular_metricas_laser()
     estado_maquina["ultimo_mensaje"] = (

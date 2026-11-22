@@ -25,5 +25,6 @@
     "limite_max_y": 9600,
     "limite_max_z": 3200,
     "bloquear_limites": false,
-    "puerto": "COM3"
+    "puerto": "COM3",
+    "intercambiar_xy": false
 }

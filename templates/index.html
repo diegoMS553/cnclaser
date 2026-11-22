@@ -988,6 +988,38 @@
                                     </div>
                                 </div>
 
+                                <div class="laser-calibration-subbox">
+                                    <div class="param-label-row">
+                                        <span class="section-eyebrow">AJUSTE EJE Z LASER (ALTURA FOCAL)</span>
+                                        <strong class="laser-z-live-badge" id="lbl-laser-z-live-sim">Z: 0 p (0.00 mm)</strong>
+                                    </div>
+                                    <div class="param-two-cols">
+                                        <div class="param-group">
+                                            <label for="select-laser-z-step-sim">Paso Z</label>
+                                            <select id="select-laser-z-step-sim" class="select-input">
+                                                <option value="10">10 p</option>
+                                                <option value="25">25 p</option>
+                                                <option value="50" selected>50 p</option>
+                                                <option value="100">100 p</option>
+                                                <option value="200">200 p</option>
+                                            </select>
+                                        </div>
+                                        <div class="param-group">
+                                            <label>Sentido Eje Z</label>
+                                            <button type="button" class="btn-subtle" id="btn-laser-inv-z-sim" onclick="alternarDireccionMotor('Z')">DIR Z: Normal</button>
+                                        </div>
+                                    </div>
+                                    <div class="param-two-cols">
+                                        <button type="button" class="btn-subtle" onclick="moverEjeLaserZ(1, 'sim')">Subir Z+</button>
+                                        <button type="button" class="btn-subtle" onclick="moverEjeLaserZ(0, 'sim')">Bajar Z-</button>
+                                    </div>
+                                    <div class="param-three-cols">
+                                        <button type="button" class="btn-subtle" onclick="fijarPuntoFocalZLaser()">Fijar Foco Z</button>
+                                        <button type="button" class="btn-subtle" onclick="irAPuntoFocalZLaser()">Ir a Foco Z</button>
+                                        <button type="button" class="btn-subtle" onclick="accionCalibrar('fijar_home_z')">Cero Z</button>
+                                    </div>
+                                </div>
+
                                 <button type="button" class="btn-estop" onclick="apagarLaserEmergencia()">
                                     APAGAR LASER INMEDIATAMENTE (0.00 W)
                                 </button>
@@ -1072,6 +1104,31 @@
                                 <button type="button" class="btn-subtle" onclick="abrirModal('modal-calibracion-ejes')">
                                     Configuracion Avanzada de Ejes...
                                 </button>
+
+                                <div class="panel-section" style="margin-top: 10px; border-top: 1px solid var(--border-subtle, #333); padding-top: 10px;">
+                                    <div class="panel-head">
+                                        <div class="panel-title-with-info">
+                                            <h3>Cinemática y Sentido de Ejes</h3>
+                                            <button type="button" class="info-tip-btn" data-info-key="cinematica_ejes" aria-label="Informacion">i</button>
+                                        </div>
+                                        <span class="active-config-pill" id="lbl-cinematica-summary">XY Estándar</span>
+                                    </div>
+                                    <div class="param-two-cols" style="margin-bottom: 6px;">
+                                        <button type="button" class="btn-subtle" id="btn-toggle-inv-x" onclick="alternarDireccionMotor('X')">DIR X: Normal</button>
+                                        <button type="button" class="btn-subtle" id="btn-toggle-inv-y" onclick="alternarDireccionMotor('Y')">DIR Y: Invertido</button>
+                                    </div>
+                                    <div class="param-two-cols" style="margin-bottom: 6px;">
+                                        <button type="button" class="btn-subtle" id="btn-toggle-swap-xy" onclick="alternarIntercambioXY()">Mapeo: X=Puente, Y=Mesa</button>
+                                        <button type="button" class="btn-action-cyan" onclick="ejecutarDiagnosticoEjes10mm()">Diagnóstico Ejes (10mm)</button>
+                                    </div>
+                                    <label class="safety-toggle" style="margin-top: 4px;">
+                                        <input type="checkbox" id="chk-hard-limits-motion" onchange="alternarHardLimits(this.checked)">
+                                        <span class="safety-text">
+                                            <strong>Microswitches / Hard Limits en Movimiento</strong>
+                                            <small>Desactivado por defecto (inmune al ruido EMI del laser 5W).</small>
+                                        </span>
+                                    </label>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1589,12 +1646,12 @@
                                 <div class="drawing-stats-grid">
                                     <div class="dip-readout-box">
                                         <span class="ro-label">TRABAJO (5W)</span>
-                                        <strong class="ro-val amber" id="laser-draw-watts-readout">1.75 W (35%)</strong>
-                                        <small id="laser-draw-pwm-readout">PWM: 89 / 255</small>
+                                        <strong class="ro-val amber" id="laser-draw-watts-readout">3.25 W (65%)</strong>
+                                        <small id="laser-draw-pwm-readout">PWM: 166 / 255</small>
                                     </div>
                                     <div class="dip-readout-box">
                                         <span class="ro-label">VELOCIDAD</span>
-                                        <strong class="ro-val cyan" id="laser-draw-speeds-readout">900 / 2200 Hz</strong>
+                                        <strong class="ro-val cyan" id="laser-draw-speeds-readout">180 / 500 Hz</strong>
                                         <small id="laser-draw-passes-readout">1 pasada | 0.00W</small>
                                     </div>
                                 </div>
@@ -1621,32 +1678,32 @@
                                 <div class="param-group">
                                     <label for="select-laser-preset">Material (Diodo 5W)</label>
                                     <select id="select-laser-preset" class="select-input" onchange="aplicarPresetMaterialLaser(this.value)">
-                                        <option value="papel_marcado">Papel / Cartulina (18% | 0.90 W)</option>
-                                        <option value="carton_grabado">Carton Grabado (30% | 1.50 W)</option>
-                                        <option value="carton_corte">Carton Corte (85% | 4.25 W | 2p)</option>
-                                        <option value="madera_grabado_fino" selected>Madera Balsa Fino (35% | 1.75 W)</option>
-                                        <option value="madera_grabado_profundo">Madera / MDF Profundo (60% | 3.00 W)</option>
-                                        <option value="madera_fotograbado">Fotograbado Dithering (42% | 2.10 W)</option>
-                                        <option value="madera_corte_balsa_3mm">Corte Madera 2-3 mm (95% | 4.75 W | 3p)</option>
-                                        <option value="cuero_grabado">Cuero Natural (28% | 1.40 W)</option>
-                                        <option value="acrilico_oscuro_grabado">Acrilico Oscuro (45% | 2.25 W)</option>
+                                        <option value="papel_marcado">Papel / Cartulina (35% | 1.75 W)</option>
+                                        <option value="carton_grabado">Carton Grabado (55% | 2.75 W)</option>
+                                        <option value="carton_corte">Carton Corte (90% | 4.50 W | 2p)</option>
+                                        <option value="madera_grabado_fino" selected>Madera Balsa Fino (65% | 3.25 W)</option>
+                                        <option value="madera_grabado_profundo">Madera / MDF Profundo (85% | 4.25 W)</option>
+                                        <option value="madera_fotograbado">Fotograbado Dithering (70% | 3.50 W)</option>
+                                        <option value="madera_corte_balsa_3mm">Corte Madera 2-3 mm (100% | 5.00 W | 3p)</option>
+                                        <option value="cuero_grabado">Cuero Natural (50% | 2.50 W)</option>
+                                        <option value="acrilico_oscuro_grabado">Acrilico Oscuro (75% | 3.75 W)</option>
                                     </select>
                                     <small class="img-info" id="lbl-laser-preset-desc"></small>
                                 </div>
 
                                 <div class="param-group">
-                                    <label for="range-laser-power-pct">Potencia: <strong id="lbl-laser-power-inline">35% (1.75 W)</strong></label>
+                                    <label for="range-laser-power-pct">Potencia: <strong id="lbl-laser-power-inline">65% (3.25 W)</strong></label>
                                     <div class="param-two-cols">
-                                        <input type="range" id="range-laser-power-pct" min="0" max="100" step="1" value="35" oninput="sincronizarSliderPotenciaLaser(this.value)" onchange="actualizarConfiguracionLaserDesdeUI('draw')">
+                                        <input type="range" id="range-laser-power-pct" min="0" max="100" step="1" value="65" oninput="sincronizarSliderPotenciaLaser(this.value)" onchange="actualizarConfiguracionLaserDesdeUI('draw')">
                                         <div class="num-input-group full">
-                                            <input type="number" id="input-laser-power-pct" value="35" min="0" max="100" step="1" onchange="sincronizarSliderPotenciaLaser(this.value); actualizarConfiguracionLaserDesdeUI('draw')">
+                                            <input type="number" id="input-laser-power-pct" value="65" min="0" max="100" step="1" onchange="sincronizarSliderPotenciaLaser(this.value); actualizarConfiguracionLaserDesdeUI('draw')">
                                             <span>%</span>
                                         </div>
                                     </div>
                                     <div class="preset-row">
-                                        <button type="button" class="chip" onclick="fijarPotenciaRapidaLaser(15)">15%</button>
-                                        <button type="button" class="chip" onclick="fijarPotenciaRapidaLaser(35)">35%</button>
-                                        <button type="button" class="chip" onclick="fijarPotenciaRapidaLaser(60)">60%</button>
+                                        <button type="button" class="chip" onclick="fijarPotenciaRapidaLaser(25)">25%</button>
+                                        <button type="button" class="chip" onclick="fijarPotenciaRapidaLaser(50)">50%</button>
+                                        <button type="button" class="chip" onclick="fijarPotenciaRapidaLaser(65)">65%</button>
                                         <button type="button" class="chip" onclick="fijarPotenciaRapidaLaser(85)">85%</button>
                                         <button type="button" class="chip" onclick="fijarPotenciaRapidaLaser(100)">100%</button>
                                     </div>
@@ -1656,14 +1713,14 @@
                                     <div class="param-group">
                                         <label for="input-laser-speed-work">Vel. Grabado</label>
                                         <div class="num-input-group full">
-                                            <input type="number" id="input-laser-speed-work" value="900" min="50" max="10000" step="50" onchange="actualizarConfiguracionLaserDesdeUI('draw')">
+                                            <input type="number" id="input-laser-speed-work" value="180" min="25" max="500" step="10" onchange="actualizarConfiguracionLaserDesdeUI('draw')">
                                             <span>Hz</span>
                                         </div>
                                     </div>
                                     <div class="param-group">
                                         <label for="input-laser-speed-travel">Vel. Viaje</label>
                                         <div class="num-input-group full">
-                                            <input type="number" id="input-laser-speed-travel" value="2200" min="100" max="12000" step="100" onchange="actualizarConfiguracionLaserDesdeUI('draw')">
+                                            <input type="number" id="input-laser-speed-travel" value="500" min="100" max="1500" step="50" onchange="actualizarConfiguracionLaserDesdeUI('draw')">
                                             <span>Hz</span>
                                         </div>
                                     </div>
@@ -1687,6 +1744,68 @@
                                 </div>
 
                                 <div class="laser-calibration-subbox">
+                                    <div class="param-label-row">
+                                        <span class="section-eyebrow">UNIFORMIDAD DE TRAZO Y OPTICA</span>
+                                    </div>
+                                    <label class="safety-toggle">
+                                        <input type="checkbox" id="chk-laser-diag-comp" checked onchange="actualizarConfiguracionLaserDesdeUI('draw')">
+                                        <span class="safety-text">
+                                            <strong>Compensacion Diagonal (Velocidad constante)</strong>
+                                            <small>Iguala grosor en lineas a 45 deg, curvas y trazos rectos.</small>
+                                        </span>
+                                    </label>
+                                    <label class="safety-toggle">
+                                        <input type="checkbox" id="chk-laser-corner-prot" checked onchange="actualizarConfiguracionLaserDesdeUI('draw')">
+                                        <span class="safety-text">
+                                            <strong>Control Termico en Esquinas y Lineas Cercanas</strong>
+                                            <small>Atenua levemente la potencia donde las lineas casi se tocan.</small>
+                                        </span>
+                                    </label>
+                                    <label class="safety-toggle">
+                                        <input type="checkbox" id="chk-laser-dedup" checked onchange="actualizarConfiguracionLaserDesdeUI('draw')">
+                                        <span class="safety-text">
+                                            <strong>Evitar Doble Quemado (Trazos Solapados)</strong>
+                                            <small>Evita repasar segmentos repetidos para que no se engrosen.</small>
+                                        </span>
+                                    </label>
+                                    <div class="param-group">
+                                        <label for="input-laser-balance-xy">Balance Haz X/Y: <strong id="lbl-laser-balance-xy">0% (Simetrico)</strong></label>
+                                        <input type="range" id="input-laser-balance-xy" class="tech-slider" min="-35" max="35" step="1" value="0" oninput="actualizarTextoBalanceLaserXY(this.value)" onchange="actualizarConfiguracionLaserDesdeUI('draw')">
+                                        <small class="img-info">Ajusta si el haz rectangular del diodo quema mas grueso en Y (+) o en X (-).</small>
+                                    </div>
+                                </div>
+
+                                <div class="laser-calibration-subbox">
+                                    <div class="param-label-row">
+                                        <span class="section-eyebrow">AJUSTE EJE Z DEL LASER (FOCO)</span>
+                                        <strong class="laser-z-live-badge" id="lbl-laser-z-live-draw">Z: 0 p (0.00 mm)</strong>
+                                    </div>
+                                    <div class="param-two-cols">
+                                        <div class="param-group">
+                                            <label for="select-laser-z-step-draw">Paso Jog Z</label>
+                                            <select id="select-laser-z-step-draw" class="select-input">
+                                                <option value="10">10 p</option>
+                                                <option value="25">25 p</option>
+                                                <option value="50" selected>50 p</option>
+                                                <option value="100">100 p</option>
+                                                <option value="200">200 p</option>
+                                            </select>
+                                        </div>
+                                        <div class="param-group">
+                                            <label>Sentido Z</label>
+                                            <button type="button" class="btn-subtle" id="btn-laser-inv-z-draw" onclick="alternarDireccionMotor('Z')">DIR Z: Normal</button>
+                                        </div>
+                                    </div>
+                                    <div class="param-two-cols">
+                                        <button type="button" class="btn-subtle" onclick="moverEjeLaserZ(1, 'draw')">Subir Laser (Z+)</button>
+                                        <button type="button" class="btn-subtle" onclick="moverEjeLaserZ(0, 'draw')">Bajar Laser (Z-)</button>
+                                    </div>
+                                    <div class="param-three-cols">
+                                        <button type="button" class="btn-subtle" onclick="fijarPuntoFocalZLaser()">Fijar Z Actual</button>
+                                        <button type="button" class="btn-subtle" onclick="irAPuntoFocalZLaser()">Ir a Foco Z</button>
+                                        <button type="button" class="btn-subtle" onclick="accionCalibrar('fijar_home_z')">Cero Z</button>
+                                    </div>
+                                    <button type="button" class="btn-subtle laser-z-test-btn" onclick="ejecutarTestEnfoqueZLaser()">Test Foco Z (5 Lineas)</button>
                                     <label class="safety-toggle">
                                         <input type="checkbox" id="chk-laser-use-z-focus" onchange="actualizarConfiguracionLaserDesdeUI('draw')">
                                         <span class="safety-text">
@@ -1696,18 +1815,25 @@
                                     </label>
                                     <div class="param-two-cols">
                                         <div class="param-group">
-                                            <label for="input-laser-z-focus-draw">Foco Z</label>
+                                            <label for="input-laser-z-focus-draw">Foco Z (p)</label>
                                             <div class="num-input-group full">
                                                 <input type="number" id="input-laser-z-focus-draw" value="0" step="25" onchange="actualizarConfiguracionLaserDesdeUI('draw')">
                                                 <span>p</span>
                                             </div>
                                         </div>
                                         <div class="param-group">
-                                            <label for="input-laser-focus-pct-draw">Guia (%)</label>
+                                            <label for="input-laser-z-step-pass">Descenso Z/Pasada</label>
                                             <div class="num-input-group full">
-                                                <input type="number" id="input-laser-focus-pct-draw" value="3" min="1" max="12" step="0.5" onchange="actualizarConfiguracionLaserDesdeUI('draw')">
-                                                <span>%</span>
+                                                <input type="number" id="input-laser-z-step-pass" value="0" min="-2000" max="2000" step="10" onchange="actualizarConfiguracionLaserDesdeUI('draw')">
+                                                <span>p</span>
                                             </div>
+                                        </div>
+                                    </div>
+                                    <div class="param-group">
+                                        <label for="input-laser-focus-pct-draw">Guia (%)</label>
+                                        <div class="num-input-group full">
+                                            <input type="number" id="input-laser-focus-pct-draw" value="3" min="1" max="12" step="0.5" onchange="actualizarConfiguracionLaserDesdeUI('draw')">
+                                            <span>%</span>
                                         </div>
                                     </div>
                                     <div class="param-two-cols">
@@ -2145,6 +2271,19 @@
                 <div class="modal-grid-2" style="margin-top:8px;">
                     <button type="button" class="btn-subtle" onclick="moverZAPosicionCalibrada('home')">Probar Ir a Home Z</button>
                     <button type="button" class="btn-subtle" onclick="moverZAPosicionCalibrada('papel')">Probar Ir a Maximo Z (Papel)</button>
+                </div>
+
+                <div class="wiring-box" style="margin-top:10px;">
+                    <strong>Orientacion y Sentido de Giro de los Ejes (DIR / Mapeo XY):</strong>
+                    <p style="margin:4px 0 8px 0; font-size:12px; color:var(--text-muted);">Si al dibujar la maquina se mueve en espejo, invertida o intercambia X con Y, ajusta estos conmutadores:</p>
+                    <div class="modal-grid-2">
+                        <button type="button" class="btn-subtle" id="modal-btn-inv-x" onclick="alternarDireccionMotor('X')">DIR Eje X: Normal</button>
+                        <button type="button" class="btn-subtle" id="modal-btn-inv-y" onclick="alternarDireccionMotor('Y')">DIR Eje Y: Invertido</button>
+                    </div>
+                    <div class="modal-grid-2" style="margin-top:6px;">
+                        <button type="button" class="btn-subtle" id="modal-btn-swap-xy" onclick="alternarIntercambioXY()">Intercambiar X/Y: No</button>
+                        <button type="button" class="btn-action-cyan" onclick="ejecutarDiagnosticoEjes10mm()">Diagnostico Fisico (10mm)</button>
+                    </div>
                 </div>
             </div>
             <div class="modal-footer">

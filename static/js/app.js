@@ -53,9 +53,9 @@ let estado = {
         en_foco: false,
         modo_operacion: "grabado_linea",
         preset_material: "madera_grabado_fino",
-        potencia_pct: 35.0,
-        potencia_pwm: 89,
-        potencia_watts: 1.75,
+        potencia_pct: 65.0,
+        potencia_pwm: 166,
+        potencia_watts: 3.25,
         potencia_foco_pct: 3.0,
         potencia_foco_pwm: 8,
         potencia_manual_pct: 25.0,
@@ -65,13 +65,18 @@ let estado = {
         jog_con_laser: false,
         potencia_prueba_pct: 20.0,
         pulso_prueba_ms: 250,
-        velocidad_grabado_hz: 900,
-        velocidad_viaje_hz: 2200,
+        velocidad_grabado_hz: 180,
+        velocidad_viaje_hz: 500,
         pasadas: 1,
         pausa_enfriamiento_ms: 0,
         z_foco_pulsos: 0,
         z_foco_fijado: true,
         usar_z_foco: false,
+        z_paso_pasada_pulsos: 0,
+        compensacion_diagonal: true,
+        balance_haz_xy_pct: 0.0,
+        proteccion_esquinas: true,
+        evitar_doble_quemado: true,
         frecuencia_pwm_hz: 5000,
         pwm_actual: 0,
         watts_actuales: 0.0
@@ -109,6 +114,7 @@ let dibujo = {
     puntoActualMM: null,
     puntosTempMM: [],
     cursorMM: { x: 0, y: 0, dentro: false },
+    laserPwmActual: 0,
     ejecutando: false,
     pausado: false,
     figuraEjecutandoIdx: -1,
@@ -404,6 +410,65 @@ async function alternarDireccionMotor(eje) {
     sincronizarEstado(data);
 }
 
+async function alternarIntercambioXY() {
+    if (anim.enMovimiento || dibujo.ejecutando) return;
+    const res = await fetch("/api/calibrate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            accion: "intercambiar_ejes_xy"
+        })
+    });
+    const data = await res.json();
+    sincronizarEstado(data);
+}
+
+async function alternarHardLimits(activar) {
+    if (anim.enMovimiento || dibujo.ejecutando) return;
+    const res = await fetch("/api/calibrate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            accion: "configurar_hard_limits",
+            activar: Boolean(activar)
+        })
+    });
+    const data = await res.json();
+    sincronizarEstado(data);
+}
+
+async function ejecutarDiagnosticoEjes10mm() {
+    if (anim.enMovimiento || dibujo.ejecutando) return;
+    const esc = Math.max(0.01, estado.pasos_por_mm || 80);
+    const pulsos10 = Math.round(10.0 * esc);
+
+    mostrarMensajeConsola("--- INICIO DE DIAGNOSTICO DE CINEMATICA (10 mm) ---");
+    mostrarMensajeConsola(`Paso 1: Moviendo EJE X hacia +10 mm (${pulsos10} pulsos)...`);
+    const okXAv = await moverEje("X", 1, pulsos10, "Diag X +10mm");
+    if (!okXAv) return;
+
+    await new Promise(r => setTimeout(r, 450));
+    mostrarMensajeConsola("Paso 2: Retornando EJE X a su origen (-10 mm)...");
+    const okXRet = await moverEje("X", 0, pulsos10, "Diag X -10mm");
+    if (!okXRet) return;
+
+    await new Promise(r => setTimeout(r, 450));
+    mostrarMensajeConsola(`Paso 3: Moviendo EJE Y hacia +10 mm (${pulsos10} pulsos)...`);
+    const okYAv = await moverEje("Y", 1, pulsos10, "Diag Y +10mm");
+    if (!okYAv) return;
+
+    await new Promise(r => setTimeout(r, 450));
+    mostrarMensajeConsola("Paso 4: Retornando EJE Y a su origen (-10 mm)...");
+    const okYRet = await moverEje("Y", 0, pulsos10, "Diag Y -10mm");
+    if (!okYRet) return;
+
+    mostrarMensajeConsola("--- DIAGNOSTICO COMPLETADO ---");
+    mostrarMensajeConsola(
+        "Verifica: El Puente Fijo debio moverse en X (derecha/izquierda) y la Mesa Movil en Y (fondo/frente). " +
+        "Si se movieron al reves o cruzados, usa los botones 'DIR X', 'DIR Y' o 'Mapeo XY' para corregirlo con un clic."
+    );
+}
+
 // ==========================================================================
 // GESTIÓN DE DIP SWITCHES (S1 - S6) Y TABLAS 1 Y 2
 // ==========================================================================
@@ -519,6 +584,7 @@ async function paroEmergencia() {
     dibujo.ejecutando = false;
     dibujo.pausado = false;
     dibujo.figuraEjecutandoIdx = -1;
+    dibujo.laserPwmActual = 0;
     anim.laserActivoEnTrazo = false;
     anim.laserPwmEnTrazo = 0;
     const boxDraw = document.getElementById("drawing-progress-box");
@@ -627,7 +693,12 @@ async function moverEje(eje, dir_int, pasosPersonalizados = null, etiquetaAccion
         const fetchPromise = fetch("/api/move", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ eje, pasos, dir_int })
+            body: JSON.stringify({
+                eje,
+                pasos,
+                dir_int,
+                libre_foco_z: (eje === "Z" && estado.modo_herramienta === "laser")
+            })
         }).then(r => r.json());
 
         const animPromise = animarTransicionFisica(predData, etiquetaAccion);
@@ -678,8 +749,8 @@ async function moverSimultaneoXY(destX, destY, etiquetaAccion = null, opcionesLa
     anim.enMovimiento = true;
     anim.ejeEnMovimiento = (dx !== 0 && dy !== 0) ? "XY" : (dx !== 0 ? "X" : "Y");
     anim.cancelarSolicitado = false;
-    anim.laserActivoEnTrazo = Boolean(opcionesLaser && opcionesLaser.laser_activo);
-    anim.laserPwmEnTrazo = opcionesLaser && opcionesLaser.laser_pwm ? Number(opcionesLaser.laser_pwm) : 0;
+    anim.laserActivoEnTrazo = Boolean((dibujo.laserPwmActual && dibujo.laserPwmActual > 0) || (opcionesLaser && opcionesLaser.laser_activo));
+    anim.laserPwmEnTrazo = dibujo.laserPwmActual || (opcionesLaser && opcionesLaser.laser_pwm ? Number(opcionesLaser.laser_pwm) : 0);
 
     const payload = {
         dest_x: Math.round(destX),
@@ -695,8 +766,11 @@ async function moverSimultaneoXY(destX, destY, etiquetaAccion = null, opcionesLa
 
     const prevX = anim.x, prevY = anim.y, prevZ = anim.z;
     const maxPasos = Math.max(Math.abs(dx), Math.abs(dy));
-    const vHzEst = Math.max(50, Number((opcionesLaser && opcionesLaser.velocidad_hz) || estado.velocidad_hz || 500));
-    const durPredMs = Math.max(16, (maxPasos / vHzEst) * 1000);
+    const vHzEst = Math.max(25, Number((opcionesLaser && opcionesLaser.velocidad_hz) || estado.velocidad_hz || 500));
+    const distPred = (opcionesLaser && opcionesLaser.laser_activo && estado.laser?.compensacion_diagonal !== false)
+        ? Math.hypot(dx, dy)
+        : maxPasos;
+    const durPredMs = Math.max(16, (distPred / vHzEst) * 1000);
     const invX = Boolean(estado.invertir_dir && estado.invertir_dir.X);
     const invY = Boolean(estado.invertir_dir && estado.invertir_dir.Y);
     const predData = {
@@ -717,11 +791,15 @@ async function moverSimultaneoXY(destX, destY, etiquetaAccion = null, opcionesLa
         if (dx !== 0) actualizarIndicadorEnaEnMovimiento("X", true);
         if (dy !== 0) actualizarIndicadorEnaEnMovimiento("Y", true);
 
+        anim.fetchCompletado = false;
         const fetchPromise = fetch("/api/move_xy", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload)
-        }).then(r => r.json());
+        }).then(r => r.json()).then(d => {
+            anim.fetchCompletado = true;
+            return d;
+        });
 
         const animPromise = animarTransicionFisica(predData, etiquetaAccion);
         const [data, completado] = await Promise.all([fetchPromise, animPromise]);
@@ -759,8 +837,8 @@ async function moverSimultaneoXY(destX, destY, etiquetaAccion = null, opcionesLa
     } finally {
         anim.enMovimiento = false;
         anim.ejeEnMovimiento = null;
-        anim.laserActivoEnTrazo = false;
-        anim.laserPwmEnTrazo = 0;
+        anim.laserActivoEnTrazo = Boolean(dibujo.laserPwmActual && dibujo.laserPwmActual > 0);
+        anim.laserPwmEnTrazo = dibujo.laserPwmActual || 0;
     }
 }
 
@@ -815,7 +893,9 @@ function animarTransicionFisica(data, etiquetaAccion = null) {
             }
 
             const transcurrido = ahora - t0;
-            const p = Math.min(1, transcurrido / duracionMs);
+            const p = (!estado.modo_simulacion && anim.fetchCompletado)
+                ? 1
+                : Math.min(1, transcurrido / duracionMs);
 
             const ease = dibujo.ejecutando
                 ? p
@@ -1023,6 +1103,7 @@ async function apagarLaserEmergencia(silencioso = false) {
         clearTimeout(_timerPulsoLaserUI);
         _timerPulsoLaserUI = null;
     }
+    dibujo.laserPwmActual = 0;
     anim.laserActivoEnTrazo = false;
     anim.laserPwmEnTrazo = 0;
     try {
@@ -1037,6 +1118,25 @@ async function apagarLaserEmergencia(silencioso = false) {
             mostrarMensajeConsola("Laser 5W apagado inmediatamente (0.00 W | PWM 0).");
         }
     } catch (_) {}
+}
+
+async function fijarPwmLaserEjecucion(pwm) {
+    const pwmVal = Math.max(0, Math.min(255, Math.round(Number(pwm) || 0)));
+    dibujo.laserPwmActual = pwmVal;
+    anim.laserActivoEnTrazo = (pwmVal > 0);
+    anim.laserPwmEnTrazo = pwmVal;
+    try {
+        const res = await fetch("/api/laser", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ accion: "pwr", pwm: pwmVal })
+        });
+        const data = await res.json();
+        sincronizarEstado(data);
+        return true;
+    } catch (_) {
+        return false;
+    }
 }
 
 async function alternarPunteroFocoLaser() {
@@ -1201,6 +1301,104 @@ async function irAPuntoFocalZLaser() {
     await irAPuntoZPulsos(zFoco, `Posicionando Punto Focal Laser 5W (Z=${zFoco}p)`);
 }
 
+async function moverEjeLaserZ(dirInt, origen = "draw") {
+    if (anim.enMovimiento || dibujo.ejecutando) return;
+    const selId = origen === "sim" ? "select-laser-z-step-sim" : "select-laser-z-step-draw";
+    const pasos = Math.max(1, parseInt(document.getElementById(selId)?.value || "50", 10) || 50);
+    const dirNorm = dirInt === 1 ? 1 : 0;
+    const etiqueta = dirNorm === 1 ? `Subir Laser Z+ (${pasos}p)` : `Bajar Laser Z- (${pasos}p)`;
+    const ok = await moverEje("Z", dirNorm, pasos, etiqueta);
+    if (ok && estado.laser) {
+        const esc = Math.max(0.01, estado.pasos_por_mm || 80);
+        mostrarMensajeConsola(
+            `Eje Z Laser movido a ${estado.pos_z} pulsos (${(estado.pos_z / esc).toFixed(2)} mm). Cuando el punto sea el mas fino, presiona 'Fijar Z Actual'.`
+        );
+    }
+}
+
+async function ejecutarTestEnfoqueZLaser() {
+    if (anim.enMovimiento || dibujo.ejecutando) return;
+    const esc = Math.max(0.01, estado.pasos_por_mm || 80);
+    const { anchoMM, altoMM } = obtenerLimitesMesaMM();
+    const ls = estado.laser || {};
+    const armado = Boolean(ls.armado);
+    const pwmTrabajo = armado ? Number(ls.potencia_pwm ?? Math.round(((ls.potencia_pct ?? 65) / 100) * 255)) : 0;
+    let velRaw = parseInt(ls.velocidad_grabado_hz || 180, 10);
+    if (velRaw >= 600) velRaw = 180;
+    const velGrabado = Math.max(25, Math.min(500, velRaw));
+    const pasoZ = Math.max(20, parseInt(document.getElementById("select-laser-z-step-draw")?.value || "50", 10) || 50);
+
+    const largoMM = Math.min(20, Math.max(8, anchoMM * 0.18));
+    const sepYMM = Math.min(4.0, Math.max(2.0, altoMM * 0.04));
+    const x0 = Math.max(2, Math.min(anchoMM - largoMM - 2, (estado.pos_x / esc) + 2));
+    const yBase = Math.max(2, Math.min(altoMM - sepYMM * 4 - 2, (estado.pos_y / esc) + 2));
+    const x1 = x0 + largoMM;
+    const zCentro = parseInt(estado.pos_z || 0, 10) || 0;
+    const offsets = [-2 * pasoZ, -pasoZ, 0, pasoZ, 2 * pasoZ];
+
+    dibujo.ejecutando = true;
+    dibujo.pausado = false;
+    dibujo.laserPwmActual = 0;
+
+    mostrarMensajeConsola(
+        `Iniciando Test de Enfoque Z (5 lineas, paso ${pasoZ}p alrededor de Z=${zCentro}p)${armado ? "" : " [SIMULACION EN SECO 0W]"}...`
+    );
+
+    try {
+        await apagarLaserEmergencia(true);
+        if (armado) {
+            await enviarAccionLaser("armar", { armado: true });
+        }
+
+        for (let idx = 0; idx < offsets.length; idx++) {
+            if (!dibujo.ejecutando) break;
+            const zNivel = zCentro + offsets[idx];
+            const yNivel = yBase + idx * sepYMM;
+            const px0 = Math.round(x0 * esc);
+            const px1 = Math.round(x1 * esc);
+            const pyNivel = Math.round(yNivel * esc);
+
+            const okZ = await irAPuntoZPulsos(zNivel, `Test Foco Z Linea ${idx + 1}/5 (Z=${zNivel}p)`);
+            if (!okZ || !dibujo.ejecutando) break;
+
+            const okViaje = await irAPuntoXYPulsos(px0, pyNivel, `Viaje 0W Linea Foco ${idx + 1}/5`);
+            if (!okViaje || !dibujo.ejecutando) break;
+
+            const opcionesBurn = (armado && pwmTrabajo > 0)
+                ? { laser_activo: true, laser_pwm: pwmTrabajo, velocidad_hz: velGrabado }
+                : null;
+            dibujo.laserPwmActual = opcionesBurn ? pwmTrabajo : 0;
+            const okBurn = await irAPuntoXYPulsos(
+                px1,
+                pyNivel,
+                `Test Foco Z Linea ${idx + 1}/5 (Z=${zNivel}p)`,
+                opcionesBurn
+            );
+            dibujo.laserPwmActual = 0;
+            if (!okBurn || !dibujo.ejecutando) break;
+
+            mostrarMensajeConsola(
+                `Test Foco Z - Linea ${idx + 1}/5 trazada en Z = ${zNivel} pulsos (${(zNivel / esc).toFixed(2)} mm)`
+            );
+        }
+
+        if (dibujo.ejecutando && estado.pos_z !== zCentro) {
+            await irAPuntoZPulsos(zCentro, `Retorno Z centro (${zCentro}p)`);
+        }
+        if (dibujo.ejecutando) {
+            mostrarMensajeConsola(
+                "Test de Enfoque Z finalizado. Observa cual de las 5 lineas quedo mas fina y nitida, escribe su Z en 'Foco Z (p)' y pulsa 'Ir a Foco Z' (asegurate de retirar la guia de metal antes de grabar)."
+            );
+        }
+    } finally {
+        await apagarLaserEmergencia(true);
+        dibujo.laserPwmActual = 0;
+        dibujo.ejecutando = false;
+        dibujo.pausado = false;
+        await validarPosicionMotor();
+    }
+}
+
 async function aplicarPresetMaterialLaser(presetKey) {
     if (dibujo.ejecutando) return;
     await enviarAccionLaser("aplicar_preset", { preset: presetKey });
@@ -1227,8 +1425,8 @@ async function actualizarConfiguracionLaserDesdeUI(origen = "draw") {
     const ls = estado.laser || {};
 
     const potenciaPct = origen === "draw"
-        ? parseFloat(document.getElementById("input-laser-power-pct")?.value ?? ls.potencia_pct ?? 35)
-        : (ls.potencia_pct ?? 35);
+        ? parseFloat(document.getElementById("input-laser-power-pct")?.value ?? ls.potencia_pct ?? 65)
+        : (ls.potencia_pct ?? 65);
 
     const focoPct = origen === "sim"
         ? parseFloat(document.getElementById("input-laser-focus-pct-sim")?.value ?? ls.potencia_foco_pct ?? 3)
@@ -1241,12 +1439,18 @@ async function actualizarConfiguracionLaserDesdeUI(origen = "draw") {
         ? parseInt(document.getElementById("input-laser-z-focus-sim")?.value ?? ls.z_foco_pulsos ?? 0, 10)
         : parseInt(document.getElementById("input-laser-z-focus-draw")?.value ?? ls.z_foco_pulsos ?? 0, 10);
 
-    const velGrabado = parseInt(document.getElementById("input-laser-speed-work")?.value ?? ls.velocidad_grabado_hz ?? 900, 10);
-    const velViaje = parseInt(document.getElementById("input-laser-speed-travel")?.value ?? ls.velocidad_viaje_hz ?? 2200, 10);
+    const velGrabado = parseInt(document.getElementById("input-laser-speed-work")?.value ?? ls.velocidad_grabado_hz ?? 180, 10);
+    const velViaje = parseInt(document.getElementById("input-laser-speed-travel")?.value ?? ls.velocidad_viaje_hz ?? 500, 10);
     const pasadas = parseInt(document.getElementById("input-laser-passes")?.value ?? ls.pasadas ?? 1, 10);
     const pausaMs = parseInt(document.getElementById("input-laser-cool-ms")?.value ?? ls.pausa_enfriamiento_ms ?? 0, 10);
     const usarZFoco = Boolean(document.getElementById("chk-laser-use-z-focus")?.checked ?? ls.usar_z_foco);
+    const zPasoPasada = parseInt(document.getElementById("input-laser-z-step-pass")?.value ?? ls.z_paso_pasada_pulsos ?? 0, 10) || 0;
     const modoOp = document.getElementById("select-laser-operation-mode")?.value || ls.modo_operacion || "grabado_linea";
+
+    const compDiag = Boolean(document.getElementById("chk-laser-diag-comp")?.checked ?? (ls.compensacion_diagonal !== false));
+    const protEsquinas = Boolean(document.getElementById("chk-laser-corner-prot")?.checked ?? (ls.proteccion_esquinas !== false));
+    const evitarDoble = Boolean(document.getElementById("chk-laser-dedup")?.checked ?? (ls.evitar_doble_quemado !== false));
+    const balXY = parseFloat(document.getElementById("input-laser-balance-xy")?.value ?? ls.balance_haz_xy_pct ?? 0) || 0;
 
     await enviarAccionLaser("configurar", {
         modo_operacion: modoOp,
@@ -1259,7 +1463,12 @@ async function actualizarConfiguracionLaserDesdeUI(origen = "draw") {
         pasadas: pasadas,
         pausa_enfriamiento_ms: pausaMs,
         z_foco_pulsos: zFoco,
-        usar_z_foco: usarZFoco
+        usar_z_foco: usarZFoco,
+        z_paso_pasada_pulsos: zPasoPasada,
+        compensacion_diagonal: compDiag,
+        proteccion_esquinas: protEsquinas,
+        evitar_doble_quemado: evitarDoble,
+        balance_haz_xy_pct: balXY
     });
     actualizarEstadisticasDibujo();
 }
@@ -1294,11 +1503,12 @@ async function probarEncuadreLaserPerimetral() {
     for (let i = 0; i < pts.length; i++) {
         const px = Math.round(pts[i][0] * esc);
         const py = Math.round(pts[i][1] * esc);
-        const ok = await moverSimultaneoXY(px, py, `Encuadre Laser (${i + 1}/${pts.length})`, {
-            laser_activo: usarGuia,
-            laser_pwm: pwmGuia,
-            velocidad_hz: velViaje
-        });
+        if (usarGuia) {
+            await fijarPwmLaserEjecucion(pwmGuia);
+        } else {
+            await fijarPwmLaserEjecucion(0);
+        }
+        const ok = await moverSimultaneoXY(px, py, `Encuadre Laser (${i + 1}/${pts.length})`);
         if (!ok) break;
     }
     if (!usarGuia) {
@@ -1508,7 +1718,7 @@ function sincronizarUILaser5W() {
     const drawPasses = document.getElementById("laser-draw-passes-readout");
     if (drawWatts) drawWatts.textContent = `${wattsCfg.toFixed(2)} W (${pct.toFixed(0)}%)`;
     if (drawPwm) drawPwm.textContent = `PWM: ${pwmCfg} / 255 | Max: 5000 mW`;
-    if (drawSpeeds) drawSpeeds.textContent = `${ls.velocidad_grabado_hz || 900} / ${ls.velocidad_viaje_hz || 2200} Hz`;
+    if (drawSpeeds) drawSpeeds.textContent = `${ls.velocidad_grabado_hz || 180} / ${ls.velocidad_viaje_hz || 500} Hz`;
     if (drawPasses) {
         const pCount = ls.pasadas || 1;
         drawPasses.textContent = `${pCount} ${pCount === 1 ? "pasada" : "pasadas"} | Viaje en 0.00 W`;
@@ -1527,10 +1737,39 @@ function sincronizarUILaser5W() {
     setValIfIdle("input-laser-pulse-ms-sim", ls.pulso_prueba_ms ?? 250);
     setValIfIdle("input-laser-z-focus-sim", ls.z_foco_pulsos ?? 0);
     setValIfIdle("input-laser-z-focus-draw", ls.z_foco_pulsos ?? 0);
-    setValIfIdle("input-laser-speed-work", ls.velocidad_grabado_hz ?? 900);
-    setValIfIdle("input-laser-speed-travel", ls.velocidad_viaje_hz ?? 2200);
+    setValIfIdle("input-laser-speed-work", ls.velocidad_grabado_hz ?? 180);
+    setValIfIdle("input-laser-speed-travel", ls.velocidad_viaje_hz ?? 500);
     setValIfIdle("input-laser-passes", ls.pasadas ?? 1);
     setValIfIdle("input-laser-cool-ms", ls.pausa_enfriamiento_ms ?? 0);
+    setValIfIdle("input-laser-z-step-pass", ls.z_paso_pasada_pulsos ?? 0);
+
+    const chkDiagComp = document.getElementById("chk-laser-diag-comp");
+    if (chkDiagComp) chkDiagComp.checked = (ls.compensacion_diagonal !== false);
+    const chkCornerProt = document.getElementById("chk-laser-corner-prot");
+    if (chkCornerProt) chkCornerProt.checked = (ls.proteccion_esquinas !== false);
+    const chkDedup = document.getElementById("chk-laser-dedup");
+    if (chkDedup) chkDedup.checked = (ls.evitar_doble_quemado !== false);
+
+    const balXY = Number(ls.balance_haz_xy_pct ?? 0);
+    const inBalXY = document.getElementById("input-laser-balance-xy");
+    if (inBalXY && document.activeElement !== inBalXY) inBalXY.value = balXY;
+    actualizarTextoBalanceLaserXY(balXY);
+
+    const escZ = Math.max(0.01, estado.pasos_por_mm || 80);
+    const zActual = parseInt(estado.pos_z || 0, 10) || 0;
+    const zTxt = `Z: ${zActual} p (${(zActual / escZ).toFixed(2)} mm)`;
+    ["lbl-laser-z-live-draw", "lbl-laser-z-live-sim"].forEach(id => {
+        const elZ = document.getElementById(id);
+        if (elZ) elZ.textContent = zTxt;
+    });
+    const invZ = Boolean(estado.invertir_dir && estado.invertir_dir.Z);
+    ["btn-laser-inv-z-draw", "btn-laser-inv-z-sim"].forEach(id => {
+        const btnZ = document.getElementById(id);
+        if (btnZ) {
+            btnZ.textContent = `DIR Z: ${invZ ? "Invertido" : "Normal"}`;
+            btnZ.className = invZ ? "btn-subtle active-amber" : "btn-subtle";
+        }
+    });
 
     const lblTestW = document.getElementById("lbl-laser-test-watts-sim");
     if (lblTestW) {
@@ -1579,6 +1818,19 @@ function sincronizarUILaser5W() {
         }
         btn.classList.toggle("active-focus-btn", enFoco);
     });
+}
+
+function actualizarTextoBalanceLaserXY(valRaw) {
+    const val = Math.round(Number(valRaw) || 0);
+    const lbl = document.getElementById("lbl-laser-balance-xy");
+    if (!lbl) return;
+    if (Math.abs(val) < 1) {
+        lbl.textContent = "0% (Simetrico)";
+    } else if (val > 0) {
+        lbl.textContent = `+${val}% (Atenua Y)`;
+    } else {
+        lbl.textContent = `${val}% (Atenua X)`;
+    }
 }
 
 async function abrirDisenoFinal() {
@@ -2054,10 +2306,10 @@ function estimarTrabajoTrazos(listaTrazos) {
     const esLaser = estado.modo_herramienta === "laser";
     const ls = estado.laser || {};
     const vhzTrabajo = esLaser
-        ? Math.max(50, ls.velocidad_grabado_hz || 900)
+        ? Math.max(25, ls.velocidad_grabado_hz || 180)
         : Math.max(50, estado.velocidad_hz || 1000);
     const vhzViaje = esLaser
-        ? Math.max(100, ls.velocidad_viaje_hz || 2200)
+        ? Math.max(50, ls.velocidad_viaje_hz || 500)
         : vhzTrabajo;
     const pasadas = esLaser ? Math.max(1, parseInt(ls.pasadas || 1, 10)) : 1;
     const usarZ = !esLaser && Boolean(document.getElementById("chk-draw-use-z")?.checked ?? estado.usar_z_dibujo);
@@ -2147,6 +2399,141 @@ async function irAPuntoZPulsos(destZ, etiqueta) {
     return await moverEje("Z", dz > 0 ? 1 : 0, Math.abs(dz), etiqueta);
 }
 
+// =========================================================================
+// ALGORITMOS DE UNIFORMIDAD DE TRAZO LASER (ESPESOR CONSTANTE Y ANTI-SOLAPE)
+// =========================================================================
+function distanciaPuntoASegmentoMM(px, py, x0, y0, x1, y1) {
+    const vx = x1 - x0;
+    const vy = y1 - y0;
+    const lenSq = vx * vx + vy * vy;
+    if (lenSq <= 1e-9) return Math.hypot(px - x0, py - y0);
+    let t = ((px - x0) * vx + (py - y0) * vy) / lenSq;
+    if (t < 0) t = 0;
+    else if (t > 1) t = 1;
+    return Math.hypot(px - (x0 + t * vx), py - (y0 + t * vy));
+}
+
+function fusionarSegmentosColinealesLaser(pts, tolMM = 0.05) {
+    if (!Array.isArray(pts) || pts.length <= 2) return pts;
+    const out = [pts[0]];
+    for (let i = 1; i < pts.length - 1; i++) {
+        const a = out[out.length - 1];
+        const b = pts[i];
+        const c = pts[i + 1];
+        const modB = b.length > 2 ? b[2] : null;
+        const modC = c.length > 2 ? c[2] : null;
+        if (modB !== modC) {
+            out.push(b);
+            continue;
+        }
+        const abx = b[0] - a[0];
+        const aby = b[1] - a[1];
+        const bcx = c[0] - b[0];
+        const bcy = c[1] - b[1];
+        const dot = abx * bcx + aby * bcy;
+        if (dot <= 0) {
+            // Reversa o esquina aguda: conservar vertice
+            out.push(b);
+            continue;
+        }
+        const dist = distanciaPuntoASegmentoMM(b[0], b[1], a[0], a[1], c[0], c[1]);
+        if (dist > tolMM) {
+            out.push(b);
+        }
+    }
+    out.push(pts[pts.length - 1]);
+    return out;
+}
+
+function esSegmentoSolapadoLaser(x0, y0, x1, y1, quemados, tolMM) {
+    const lenSeg = Math.hypot(x1 - x0, y1 - y0);
+    if (lenSeg <= 0.02 || !quemados || quemados.length === 0) return false;
+    const minX = Math.min(x0, x1) - tolMM;
+    const minY = Math.min(y0, y1) - tolMM;
+    const maxX = Math.max(x0, x1) + tolMM;
+    const maxY = Math.max(y0, y1) + tolMM;
+    const mx = (x0 + x1) * 0.5;
+    const my = (y0 + y1) * 0.5;
+    const vx = (x1 - x0) / lenSeg;
+    const vy = (y1 - y0) / lenSeg;
+
+    for (let i = 0; i < quemados.length; i++) {
+        const q = quemados[i];
+        if (q.maxX < minX || q.minX > maxX || q.maxY < minY || q.minY > maxY) continue;
+        if (q.len <= 0.02) continue;
+        const uvx = (q.x1 - q.x0) / q.len;
+        const uvy = (q.y1 - q.y0) / q.len;
+        const align = Math.abs(vx * uvx + vy * uvy);
+        if (align < 0.96) continue;
+        const d0 = distanciaPuntoASegmentoMM(x0, y0, q.x0, q.y0, q.x1, q.y1);
+        const dM = distanciaPuntoASegmentoMM(mx, my, q.x0, q.y0, q.x1, q.y1);
+        const d1 = distanciaPuntoASegmentoMM(x1, y1, q.x0, q.y0, q.x1, q.y1);
+        if (d0 <= tolMM && dM <= tolMM && d1 <= tolMM) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function calcularFactorTermicoLaser(x0, y0, x1, y1, prevPt, nextPt, quemados, spotMM) {
+    const lenMM = Math.hypot(x1 - x0, y1 - y0);
+    if (lenMM <= 0.01) return 1.0;
+
+    let factor = 1.0;
+    const mx = (x0 + x1) * 0.5;
+    const my = (y0 + y1) * 0.5;
+    const radioProx = Math.max(0.65, spotMM * 4.5);
+
+    // 1. Control de acumulacion termica por proximidad a trazos ya grabados (evita que se engrosen o se toquen)
+    const limiteIdx = quemados.length - 1;
+    let dMin = Infinity;
+    for (let i = 0; i < limiteIdx; i++) {
+        const q = quemados[i];
+        if (mx + radioProx < q.minX || mx - radioProx > q.maxX || my + radioProx < q.minY || my - radioProx > q.maxY) {
+            continue;
+        }
+        const d = distanciaPuntoASegmentoMM(mx, my, q.x0, q.y0, q.x1, q.y1);
+        if (d < dMin) dMin = d;
+        if (dMin <= 0.1) break;
+    }
+    if (dMin < radioProx) {
+        const proxFactor = 0.78 + 0.22 * (dMin / radioProx);
+        if (proxFactor < factor) factor = proxFactor;
+    }
+
+    // 2. Atenuacion en esquinas cerradas y micro-segmentos donde el cabezal desacelera
+    const ux = (x1 - x0) / lenMM;
+    const uy = (y1 - y0) / lenMM;
+    let esquinaCerrada = false;
+
+    if (prevPt) {
+        const dxP = x0 - prevPt[0];
+        const dyP = y0 - prevPt[1];
+        const lP = Math.hypot(dxP, dyP);
+        if (lP > 0.05) {
+            const cosIn = (dxP / lP) * ux + (dyP / lP) * uy;
+            if (cosIn < 0.35) esquinaCerrada = true;
+        }
+    }
+    if (nextPt && !esquinaCerrada) {
+        const dxN = nextPt[0] - x1;
+        const dyN = nextPt[1] - y1;
+        const lN = Math.hypot(dxN, dyN);
+        if (lN > 0.05) {
+            const cosOut = ux * (dxN / lN) + uy * (dyN / lN);
+            if (cosOut < 0.35) esquinaCerrada = true;
+        }
+    }
+
+    if (esquinaCerrada && lenMM < 2.5) {
+        factor = Math.min(factor, 0.86);
+    } else if (lenMM < 0.45) {
+        factor = Math.min(factor, 0.88);
+    }
+
+    return Math.max(0.72, Math.min(1.0, factor));
+}
+
 async function ejecutarDibujoEnMaquina() {
     if (anim.enMovimiento || dibujo.ejecutando) return;
     if (dibujo.figuras.length === 0) {
@@ -2175,44 +2562,60 @@ async function ejecutarDibujoEnMaquina() {
     const boxDraw = document.getElementById("drawing-progress-box");
     const txtDraw = document.getElementById("drawing-progress-text");
 
+    const figurasTrazosExec = dibujo.figuras.map(fig => {
+        const trazos = trazosDeFigura(fig);
+        if (!esLaser) return trazos;
+        return trazos.map(pts => fusionarSegmentosColinealesLaser(pts, 0.05));
+    });
+
     // Calcular total de tramos de dibujo para la barra de progreso en vivo
     let tramosPorPasada = 0;
-    for (const fig of dibujo.figuras) {
-        for (const pts of trazosDeFigura(fig)) {
+    for (const trazosFig of figurasTrazosExec) {
+        for (const pts of trazosFig) {
             if (pts && pts.length >= 2) tramosPorPasada += (pts.length - 1);
         }
     }
     const inicioEjecucionMs = performance.now();
 
     // =========================================================================
-    // MODO LASER 5W (PWM 0..255 + APAGADO 0W EN VIAJES + MULTIPASADA)
+    // MODO LASER 5W (PWM SINCRONIZADO + UNIFORMIDAD DE ESPESOR + FOCO EJE Z)
     // =========================================================================
     if (esLaser) {
         const armado = Boolean(ls.armado);
-        const pct = Number(ls.potencia_pct ?? 35);
+        const pct = Number(ls.potencia_pct ?? 65);
         const pwmTrabajo = armado ? Number(ls.potencia_pwm ?? Math.round((pct / 100) * 255)) : 0;
         const wattsTrabajo = armado ? Number(ls.potencia_watts ?? ((pct / 100) * 5.0)) : 0.0;
-        const velGrabado = Math.max(50, parseInt(ls.velocidad_grabado_hz || 900, 10));
-        const velViaje = Math.max(100, parseInt(ls.velocidad_viaje_hz || 2200, 10));
+        let velGrabadoRaw = parseInt(ls.velocidad_grabado_hz || 180, 10);
+        if (velGrabadoRaw >= 600) velGrabadoRaw = 180;
+        const velGrabado = Math.max(25, Math.min(500, velGrabadoRaw));
         const totalPasadas = Math.max(1, parseInt(ls.pasadas || 1, 10));
         const pausaMs = Math.max(0, parseInt(ls.pausa_enfriamiento_ms || 0, 10));
         const usarZFoco = Boolean(ls.usar_z_foco);
         const zFoco = parseInt(ls.z_foco_pulsos || 0, 10);
+        const zPasoPasada = parseInt(ls.z_paso_pasada_pulsos || 0, 10) || 0;
+        const protEsquinas = ls.proteccion_esquinas !== false;
+        const evitarDoble = ls.evitar_doble_quemado !== false;
+        const spotMM = Math.max(0.08, Number(ls.spot_mm || 0.15));
 
         const totalTramos = Math.max(1, tramosPorPasada * totalPasadas);
         let tramosHechos = 0;
+        let tramosDuplicadosOmitidos = 0;
 
         dibujo.ejecutando = true;
         dibujo.pausado = false;
+        dibujo.laserPwmActual = 0;
         if (boxDraw) boxDraw.classList.remove("hidden");
         actualizarProgresoDibujoUI(0, totalTramos, "Iniciando Laser 5W...", inicioEjecucionMs, true);
 
         mostrarMensajeConsola(
-            `Iniciando Trabajo Laser 5W [${ls.modo_operacion || "grabado_linea"}]: ${wattsTrabajo.toFixed(2)}W (${pct.toFixed(0)}% | PWM ${pwmTrabajo}/255)${armado ? "" : " [SIMULACION EN SECO 0W - DESARMADO]"} | ${totalPasadas} pasada(s)...`
+            `Iniciando Trabajo Laser 5W Sincronizado [${ls.modo_operacion || "grabado_linea"}]: ${wattsTrabajo.toFixed(2)}W (${pct.toFixed(0)}% | PWM ${pwmTrabajo}/255 | ${velGrabado} Hz)${armado ? "" : " [SIMULACION EN SECO 0W - DESARMADO]"} | ${totalPasadas} pasada(s)...`
         );
 
-        // Asegurar laser en 0W antes de posicionar
+        // Asegurar laser en 0W y sincronizar estado de armado en el ESP32 antes de iniciar
         await apagarLaserEmergencia(true);
+        if (armado) {
+            await enviarAccionLaser("armar", { armado: true });
+        }
 
         // Opcional: posicionar Z en el Punto Focal calibrado antes de iniciar
         if (usarZFoco && estado.pos_z !== zFoco) {
@@ -2231,13 +2634,22 @@ async function ejecutarDibujoEnMaquina() {
             if (!dibujo.ejecutando) break;
             const etqPasada = totalPasadas > 1 ? ` [Pasada ${p}/${totalPasadas}]` : "";
 
+            if (usarZFoco && p > 1 && zPasoPasada !== 0) {
+                const zMetaPasada = zFoco + (p - 1) * zPasoPasada;
+                if (txtDraw) txtDraw.textContent = `Ajustando Eje Z para Pasada ${p}/${totalPasadas} (${zMetaPasada}p)...`;
+                const okZPas = await irAPuntoZPulsos(zMetaPasada, `Foco Z Pasada ${p}/${totalPasadas}`);
+                if (!okZPas || !dibujo.ejecutando) break pasadasLoop;
+            }
+
+            const quemadosPasada = [];
+
             for (let i = 0; i < dibujo.figuras.length; i++) {
                 if (!dibujo.ejecutando) break pasadasLoop;
                 dibujo.figuraEjecutandoIdx = i;
                 renderizarListaFigurasDibujo();
 
                 const fig = dibujo.figuras[i];
-                const trazos = trazosDeFigura(fig);
+                const trazos = figurasTrazosExec[i];
 
                 for (let k = 0; k < trazos.length; k++) {
                     if (!dibujo.ejecutando) break pasadasLoop;
@@ -2245,24 +2657,26 @@ async function ejecutarDibujoEnMaquina() {
                     if (!pts || pts.length < 2) continue;
                     const infoTrazo = trazos.length > 1 ? ` trazo ${k + 1}/${trazos.length}` : "";
 
-                    // 1. Viaje rapido al inicio del trazo con Laser APAGADO (0.00 W / PWM 0)
+                    // 1. Desplazarse al inicio del trazo en 0.00 W usando la cinematica estandar de Modo Dibujo
+                    dibujo.laserPwmActual = 0;
                     const iniX = Math.round(pts[0][0] * esc);
                     const iniY = Math.round(pts[0][1] * esc);
                     if (txtDraw) {
-                        txtDraw.textContent = `Viaje 0.00W${etqPasada} -> Inicio de #${i + 1} ${fig.nombre}${infoTrazo} (${velViaje} Hz)...`;
+                        txtDraw.textContent = `Posicionando X+Y en inicio 0W${etqPasada} de #${i + 1} ${fig.nombre}${infoTrazo}...`;
                     }
-                    const okIni = await irAPuntoXYPulsos(iniX, iniY, `Viaje 0W #${i + 1}${infoTrazo}`, {
-                        laser_activo: false,
-                        laser_pwm: 0,
-                        velocidad_hz: velViaje
-                    });
+                    const okIni = await irAPuntoXYPulsos(iniX, iniY, `Posicionando 0W #${i + 1}${infoTrazo}`);
                     if (!okIni || !dibujo.ejecutando) break pasadasLoop;
 
-                    // 2. Recorrer los segmentos del trazo modulando el Laser 5W (M2L sincronizado / Raster PWM por linea)
+                    // 2. Recorrer los tramos sincronizando el PWM con cada paso de los motores (M2L)
+                    //    y aplicando compensacion termica uniforme en esquinas, diagonales y lineas cercanas.
                     for (let j = 1; j < pts.length; j++) {
                         if (!(await esperarSiPausadoDibujo())) break pasadasLoop;
-                        const px = Math.round(pts[j][0] * esc);
-                        const py = Math.round(pts[j][1] * esc);
+                        const x0 = pts[j - 1][0];
+                        const y0 = pts[j - 1][1];
+                        const x1 = pts[j][0];
+                        const y1 = pts[j][1];
+                        const px = Math.round(x1 * esc);
+                        const py = Math.round(y1 * esc);
                         const tieneMod = pts[j].length > 2 && pts[j][2] !== undefined && pts[j][2] !== null;
 
                         let segActivo = armado && pwmTrabajo > 0;
@@ -2276,27 +2690,58 @@ async function ejecutarDibujoEnMaquina() {
                                 segActivo = false;
                                 pwmSeg = 0;
                                 wattsSeg = 0.0;
-                                velSeg = velViaje;
                             } else {
                                 pwmSeg = armado ? Math.max(1, Math.min(255, Math.round((modPct / 100.0) * 255))) : 0;
                                 wattsSeg = (pwmSeg / 255.0) * 5.0;
                                 segActivo = armado && pwmSeg > 0;
                             }
+                        } else if (segActivo && pwmSeg > 0) {
+                            if (evitarDoble && esSegmentoSolapadoLaser(x0, y0, x1, y1, quemadosPasada, Math.max(0.15, spotMM * 1.1))) {
+                                segActivo = false;
+                                pwmSeg = 0;
+                                wattsSeg = 0.0;
+                                tramosDuplicadosOmitidos++;
+                            } else if (protEsquinas) {
+                                const prevPt = j >= 2 ? pts[j - 2] : null;
+                                const nextPt = (j + 1 < pts.length) ? pts[j + 1] : null;
+                                const fTerm = calcularFactorTermicoLaser(x0, y0, x1, y1, prevPt, nextPt, quemadosPasada, spotMM);
+                                pwmSeg = Math.max(1, Math.min(255, Math.round(pwmSeg * fTerm)));
+                                wattsSeg = (pwmSeg / 255.0) * 5.0;
+                            }
                         }
 
+                        dibujo.laserPwmActual = segActivo ? pwmSeg : 0;
                         const etq = `Laser ${wattsSeg.toFixed(2)}W (PWM ${pwmSeg})${etqPasada} #${i + 1}${infoTrazo} (${j}/${pts.length - 1})`;
                         if (txtDraw) {
-                            txtDraw.textContent = `${etq} -> X:${pts[j][0].toFixed(1)}mm, Y:${pts[j][1].toFixed(1)}mm (${velSeg} Hz)`;
+                            txtDraw.textContent = `${etq} [Sincronizado X+Y] -> X:${x1.toFixed(1)}mm (${px}p), Y:${y1.toFixed(1)}mm (${py}p) @ ${velSeg} Hz`;
                         }
-                        const okSeg = await irAPuntoXYPulsos(px, py, etq, {
-                            laser_activo: segActivo,
-                            laser_pwm: pwmSeg,
-                            velocidad_hz: velSeg
-                        });
+
+                        let okSeg;
+                        if (segActivo && pwmSeg > 0) {
+                            okSeg = await irAPuntoXYPulsos(px, py, etq, {
+                                laser_activo: true,
+                                laser_pwm: pwmSeg,
+                                velocidad_hz: velSeg
+                            });
+                            if (okSeg) {
+                                quemadosPasada.push({
+                                    x0, y0, x1, y1,
+                                    minX: Math.min(x0, x1),
+                                    minY: Math.min(y0, y1),
+                                    maxX: Math.max(x0, x1),
+                                    maxY: Math.max(y0, y1),
+                                    len: Math.hypot(x1 - x0, y1 - y0)
+                                });
+                            }
+                        } else {
+                            okSeg = await irAPuntoXYPulsos(px, py, etq);
+                        }
                         if (!okSeg || !dibujo.ejecutando) break pasadasLoop;
                         tramosHechos++;
                         actualizarProgresoDibujoUI(tramosHechos, totalTramos, `Laser ${etqPasada} #${i + 1}`, inicioEjecucionMs, true);
                     }
+
+                    dibujo.laserPwmActual = 0;
                 }
             }
 
@@ -2311,13 +2756,17 @@ async function ejecutarDibujoEnMaquina() {
         const completadoLaser = dibujo.ejecutando;
         dibujo.ejecutando = false;
         dibujo.pausado = false;
+        dibujo.laserPwmActual = 0;
         dibujo.figuraEjecutandoIdx = -1;
         if (boxDraw) boxDraw.classList.add("hidden");
         actualizarProgresoDibujoUI(completadoLaser ? totalTramos : tramosHechos, totalTramos, completadoLaser ? "Trabajo Laser completado" : "Detenido", inicioEjecucionMs, false);
         renderizarListaFigurasDibujo();
         await validarPosicionMotor();
         if (completadoLaser) {
-            mostrarMensajeConsola("Trabajo Laser 5W completado. Diodo apagado (0.00 W | PWM 0) y motores en reposo ENA.");
+            const extraDedup = tramosDuplicadosOmitidos > 0
+                ? ` (${tramosDuplicadosOmitidos} tramo(s) superpuesto(s) omitido(s) en 0W)`
+                : "";
+            mostrarMensajeConsola(`Trabajo Laser 5W completado${extraDedup}. Diodo apagado (0.00 W | PWM 0) y motores en reposo ENA.`);
         }
         return;
     }
@@ -3455,7 +3904,54 @@ function sincronizarEstado(data, forzarPosicionAnim = false) {
                 btnDir.className = inv ? "ena-toggle-btn energized" : "ena-toggle-btn idle";
             }
         });
+
+        // Controles de orientacion cinematica en panel Calibracion y Modales
+        const invX = Boolean(estado.invertir_dir && estado.invertir_dir.X);
+        const invY = Boolean(estado.invertir_dir && estado.invertir_dir.Y);
+        const swapXY = Boolean(estado.intercambiar_xy);
+        const hlActive = Boolean(estado.hard_limits_activos);
+
+        const elInvX = document.getElementById("btn-toggle-inv-x");
+        const elInvY = document.getElementById("btn-toggle-inv-y");
+        const elSwapXY = document.getElementById("btn-toggle-swap-xy");
+        const elSummary = document.getElementById("lbl-cinematica-summary");
+        const elChkHL = document.getElementById("chk-hard-limits-motion");
+
+        if (elInvX) {
+            elInvX.textContent = `DIR X: ${invX ? "Invertido" : "Normal"}`;
+            elInvX.className = invX ? "btn-subtle active-amber" : "btn-subtle";
+        }
+        if (elInvY) {
+            elInvY.textContent = `DIR Y: ${invY ? "Invertido" : "Normal"}`;
+            elInvY.className = invY ? "btn-subtle active-amber" : "btn-subtle";
+        }
+        if (elSwapXY) {
+            elSwapXY.textContent = swapXY ? "Mapeo: X=Mesa, Y=Puente (Invertido)" : "Mapeo: X=Puente, Y=Mesa (Normal)";
+            elSwapXY.className = swapXY ? "btn-subtle active-cyan" : "btn-subtle";
+        }
+        if (elSummary) {
+            const txtSwap = swapXY ? "X<->Y" : "XY";
+            const txtInv = `${invX ? "X-" : "X+"}/${invY ? "Y-" : "Y+"}`;
+            elSummary.textContent = `${txtSwap} (${txtInv})`;
+        }
+        if (elChkHL) {
+            elChkHL.checked = hlActive;
+        }
+
+        const mInvX = document.getElementById("modal-btn-inv-x");
+        const mInvY = document.getElementById("modal-btn-inv-y");
+        const mSwapXY = document.getElementById("modal-btn-swap-xy");
+        if (mInvX) mInvX.textContent = `DIR Eje X: ${invX ? "Invertido" : "Normal"}`;
+        if (mInvY) mInvY.textContent = `DIR Eje Y: ${invY ? "Invertido" : "Normal"}`;
+        if (mSwapXY) mSwapXY.textContent = `Intercambiar X/Y: ${swapXY ? "SI (Cables Cruzados)" : "NO (Estandar)"}`;
     }
+
+    const escLiveZ = Math.max(0.01, estado.pasos_por_mm || 80);
+    const posZLive = parseInt(estado.pos_z || 0, 10) || 0;
+    ["lbl-laser-z-live-draw", "lbl-laser-z-live-sim"].forEach(id => {
+        const elZ = document.getElementById(id);
+        if (elZ) elZ.textContent = `Z: ${posZLive} p (${(posZLive / escLiveZ).toFixed(2)} mm)`;
+    });
 
     // 2. Actualizar Banner de Validación A Prueba de Errores
     if (estado.validaciones) {
@@ -6503,11 +6999,7 @@ async function encuadrarDisenoEnMesa() {
     const esquinas = [[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]];
     for (let i = 0; i < esquinas.length; i++) {
         if (!dibujo.ejecutando) break;
-        await irAPuntoXYPulsos(esquinas[i][0], esquinas[i][1], `Encuadre Diseno (${i + 1}/5)`, {
-            laser_activo: false,
-            laser_pwm: 0,
-            velocidad_hz: velViaje
-        });
+        await irAPuntoXYPulsos(esquinas[i][0], esquinas[i][1], `Encuadre Diseno (${i + 1}/5)`);
     }
     dibujo.ejecutando = false;
     mostrarMensajeConsola("Encuadre de diseno completado sin emision (0.00 W).");

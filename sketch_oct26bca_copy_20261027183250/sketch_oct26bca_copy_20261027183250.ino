@@ -23,7 +23,9 @@
  *                             * Conector al Laser (3 pines): [VCC 12V] [GND] [PWM]
  *                             * Salida 1 (Alimentacion 2 hilos): VCC (+12V) y GND -> Fuente de 12V DC
  *                             * Salida 2 (Control 2 hilos)     : PWM -> GPIO 23 del ESP32
- *                                                                GND -> Pin GND del ESP32 (Tierra comun)
+ *                                      
+    
+                              GND -> Pin GND del ESP32 (Tierra comun)
  *     - Por que usar ese    : El laser se alimenta con 12V DC pero recibe la senal PWM logica
  *                             desde el ESP32. El segundo GND une la referencia de tierra entre
  *                             la fuente de 12V y el ESP32 sin meter 12V al microcontrolador.
@@ -66,6 +68,10 @@ bool endstopZHabilitado = false;
 
 // Polaridad de los microswitches (true = COM a GND y NO a GPIO, se activa en LOW al presionar rodaja)
 bool endstopActivoEnBajo = true;
+
+// Hard limits durante movimiento (false por defecto para evitar bloqueos/perdida de pasos por ruido EMI del laser o pines flotantes)
+// Los microswitches SIEMPRE se usan de forma segura y completa durante AUTOHOME y HOME_AXIS.
+bool hardLimitsEnMovimiento = false;
 
 // Direcciones fisicas por defecto hacia los microswitches para Auto-Calibracion (X e Y):
 // - X (Puente fijo)  : 0 mueve hacia la izquierda (buscando endstopX)
@@ -178,11 +184,16 @@ void establecerEnableTodos(bool habilitar) {
   establecerEnableMotor('Z', habilitar);
 }
 
-// --- LECTURA CON FILTRO ANTI-REBOTE (DEBOUNCE) DEL MICROSWITCH DE RODAJA ---
+// --- LECTURA RAPIDA Y LECTURA CON FILTRO ANTI-REBOTE (DEBOUNCE) DE MICROSWITCHES ---
 bool finCarreraPresionado(int pinEndstop) {
   int nivelActivo = endstopActivoEnBajo ? LOW : HIGH;
+  return (digitalRead(pinEndstop) == nivelActivo);
+}
+
+bool finCarreraPresionadoDebounce(int pinEndstop) {
+  int nivelActivo = endstopActivoEnBajo ? LOW : HIGH;
   if (digitalRead(pinEndstop) == nivelActivo) {
-    delayMicroseconds(1500); // Filtro de 1.5 ms contra ruido inductivo de los motores
+    delayMicroseconds(1200); // Filtro contra rebote solo en busqueda de Home
     return (digitalRead(pinEndstop) == nivelActivo);
   }
   return false;
@@ -210,7 +221,7 @@ bool autocalibrarEjeIndividual(char eje, int dirHaciaSwitch, long maxPasos) {
 
   bool detectado = false;
   for (long i = 0; i < maxPasos; i++) {
-    if (finCarreraPresionado(pinSw)) {
+    if (finCarreraPresionadoDebounce(pinSw)) {
       detectado = true;
       break;
     }
@@ -267,12 +278,12 @@ void autocalibrarHomeCompleto(int dirHX, int dirHY, int dirHZ, bool reportarSeri
   digitalWrite(dirY, dirHY);
   delayMicroseconds(15);
 
-  bool xTocado = finCarreraPresionado(endstopX);
-  bool yTocado = finCarreraPresionado(endstopY);
+  bool xTocado = finCarreraPresionadoDebounce(endstopX);
+  bool yTocado = finCarreraPresionadoDebounce(endstopY);
 
   for (long i = 0; i < MAX_PASOS_HOME_XY; i++) {
-    if (!xTocado && finCarreraPresionado(endstopX)) xTocado = true;
-    if (!yTocado && finCarreraPresionado(endstopY)) yTocado = true;
+    if (!xTocado && finCarreraPresionadoDebounce(endstopX)) xTocado = true;
+    if (!yTocado && finCarreraPresionadoDebounce(endstopY)) yTocado = true;
     if (xTocado && yTocado) break;
 
     if (Serial.available() > 0) {
@@ -357,9 +368,13 @@ void moverSimultaneoXYLaser(long pasosX, int dirXVal, long pasosY, int dirYVal, 
   long ejecutadosY = 0;
 
   for (long i = 0; i < totalPasos; i++) {
-    // Proteccion por microswitch si el eje se mueve hacia el limite inferior izquierdo
-    bool xBloqueado = (dirXVal == dirFisicaHomeX) && finCarreraPresionado(endstopX);
-    bool yBloqueado = (dirYVal == dirFisicaHomeY) && finCarreraPresionado(endstopY);
+    // Proteccion por microswitch activa solo si hardLimitsEnMovimiento es true (evita bloqueos por ruido EMI durante grabado)
+    bool xBloqueado = false;
+    bool yBloqueado = false;
+    if (hardLimitsEnMovimiento) {
+      xBloqueado = (dirXVal == dirFisicaHomeX) && finCarreraPresionado(endstopX);
+      yBloqueado = (dirYVal == dirFisicaHomeY) && finCarreraPresionado(endstopY);
+    }
 
     bool pulsoX = false;
     bool pulsoY = false;
@@ -491,6 +506,7 @@ void loop() {
       Serial.print(",POL:");  Serial.print(enaActivoEnBajo ? "LOW" : "HIGH");
       Serial.print(",LSR:");  Serial.print(laserPwmActual);
       Serial.print(",ARM:");  Serial.print(laserArmado ? 1 : 0);
+      Serial.print(",HL:");   Serial.print(hardLimitsEnMovimiento ? 1 : 0);
       Serial.println(",B2D:1");
       return;
     }
@@ -620,6 +636,15 @@ void loop() {
       }
     }
 
+    // 5.5. Control de Hard Limits en movimiento: "LIMITS,1" o "LIMITS,0"
+    if (comando.startsWith("LIMITS,")) {
+      int val = comando.substring(7).toInt();
+      hardLimitsEnMovimiento = (val == 1);
+      Serial.print("OK,LIMITS:");
+      Serial.println(hardLimitsEnMovimiento ? 1 : 0);
+      return;
+    }
+
     // 6. Velocidad de pulso: "SPEED,<hz>" (actualiza delayPulsoUs en el ESP32)
     if (comando.startsWith("SPEED,")) {
       int hz = comando.substring(6).toInt();
@@ -739,7 +764,7 @@ void loop() {
       delayMicroseconds(10);
 
       long pasosEjecutados = 0;
-      bool tieneSwitchActivo = (eje == 'X') || (eje == 'Y') || (eje == 'Z' && endstopZHabilitado);
+      bool tieneSwitchActivo = hardLimitsEnMovimiento && ((eje == 'X') || (eje == 'Y') || (eje == 'Z' && endstopZHabilitado));
       for (int i = 0; i < pasos; i++) {
         // Si el eje tiene microswitch habilitado y avanza hacia el limite, detiene el eje y fija 0
         if (tieneSwitchActivo && dir == dirHomeEje && finCarreraPresionado(pinSwAUsar)) {

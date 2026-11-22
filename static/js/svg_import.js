@@ -810,10 +810,10 @@ function parsearDocumentoSVG(xmlTexto, opciones = {}) {
     const mesaW = Math.max(5, mesa.anchoMM || 160);
     const mesaH = Math.max(5, mesa.altoMM || 120);
 
-    // 2. Calcular transformacion de encuadre / escala a la Zona Calibrada
+    // 2. Calcular transformacion de encuadre / escala a la Zona Calibrada con inversion de Eje Y (SVG +Y hacia abajo -> CNC +Y hacia arriba)
     let factorEscala = 1.0;
-    let offsetX = 0;
-    let offsetY = 0;
+    let baseX = 0;
+    let baseY = 0;
 
     if (modoPosicion === "centrar_ajustar") {
         const maxUtilW = mesaW * 0.90;
@@ -823,8 +823,8 @@ function parsearDocumentoSVG(xmlTexto, opciones = {}) {
         }
         const finalW = rawW * factorEscala;
         const finalH = rawH * factorEscala;
-        offsetX = (mesaW - finalW) * 0.5 - minX * factorEscala;
-        offsetY = (mesaH - finalH) * 0.5 - minY * factorEscala;
+        baseX = (mesaW - finalW) * 0.5;
+        baseY = (mesaH - finalH) * 0.5;
     } else if (modoPosicion === "origen_recortar") {
         const margen = 2.0;
         const maxUtilW = Math.max(2, mesaW - margen * 2);
@@ -832,27 +832,28 @@ function parsearDocumentoSVG(xmlTexto, opciones = {}) {
         if (rawW > maxUtilW || rawH > maxUtilH) {
             factorEscala = Math.min(maxUtilW / rawW, maxUtilH / rawH);
         }
-        offsetX = margen - minX * factorEscala;
-        offsetY = margen - minY * factorEscala;
+        baseX = margen;
+        baseY = margen;
     } else {
-        // documento_original: mantiene coordenadas del lienzo Inkscape (recortando solo si sale de 0..mesa)
-        if (maxX > mesaW || maxY > mesaH || minX < 0 || minY < 0) {
-            const maxUtilW = mesaW * 0.92;
-            const maxUtilH = mesaH * 0.92;
-            if (rawW > maxUtilW || rawH > maxUtilH) {
-                factorEscala = Math.min(maxUtilW / rawW, maxUtilH / rawH);
-            }
-            offsetX = Math.max(1, Math.min(mesaW - rawW * factorEscala - 1, minX * factorEscala)) - minX * factorEscala;
-            offsetY = Math.max(1, Math.min(mesaH - rawH * factorEscala - 1, minY * factorEscala)) - minY * factorEscala;
+        // documento_original: mantiene proporciones y encuadra en mesa
+        const maxUtilW = mesaW * 0.92;
+        const maxUtilH = mesaH * 0.92;
+        if (rawW > maxUtilW || rawH > maxUtilH) {
+            factorEscala = Math.min(maxUtilW / rawW, maxUtilH / rawH);
         }
+        const finalW = rawW * factorEscala;
+        const finalH = rawH * factorEscala;
+        baseX = Math.max(1, Math.min(mesaW - finalW - 1, minX * factorEscala));
+        baseY = Math.max(1, Math.min(mesaH - finalH - 1, (mesaH - maxY * factorEscala)));
     }
 
     let finalMinX = Infinity, finalMinY = Infinity, finalMaxX = -Infinity, finalMaxY = -Infinity;
     itemsExtraidos.forEach(item => {
         item.trazosFinales = item.trazosCNC.map(tr =>
             tr.map(([x, y]) => {
-                const fx = Number((x * factorEscala + offsetX).toFixed(3));
-                const fy = Number((y * factorEscala + offsetY).toFixed(3));
+                const fx = Number((baseX + (x - minX) * factorEscala).toFixed(3));
+                // Inversion vertical: maxY - y asegura que la parte superior de la imagen quede en +Y arriba
+                const fy = Number((baseY + (maxY - y) * factorEscala).toFixed(3));
                 if (fx < finalMinX) finalMinX = fx;
                 if (fx > finalMaxX) finalMaxX = fx;
                 if (fy < finalMinY) finalMinY = fy;
