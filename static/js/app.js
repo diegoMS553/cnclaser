@@ -762,6 +762,18 @@ async function moverSimultaneoXY(destX, destY, etiquetaAccion = null, opcionesLa
         if (opcionesLaser.velocidad_hz) {
             payload.velocidad_hz = Number(opcionesLaser.velocidad_hz);
         }
+        if (opcionesLaser.pre_ignicion) {
+            payload.pre_ignicion = true;
+        }
+        if (opcionesLaser.corte_trazo) {
+            payload.corte_trazo = true;
+        }
+        if (opcionesLaser.retraso_ignicion_ms !== undefined) {
+            payload.retraso_ignicion_ms = Number(opcionesLaser.retraso_ignicion_ms);
+        }
+        if (opcionesLaser.retraso_corte_ms !== undefined) {
+            payload.retraso_corte_ms = Number(opcionesLaser.retraso_corte_ms);
+        }
     }
 
     const prevX = anim.x, prevY = anim.y, prevZ = anim.z;
@@ -1909,14 +1921,29 @@ function seleccionarHerramientaDibujo(herramienta) {
 
 function obtenerLimitesMesaMM() {
     const esc = Math.max(0.01, estado.pasos_por_mm);
-    const limX = Math.abs(estado.limite_max_x) > 0 ? Math.abs(estado.limite_max_x) : 8400;
-    const limY = Math.abs(estado.limite_max_y) > 0 ? Math.abs(estado.limite_max_y) : 7900;
+    const limX = Math.abs(estado.limite_max_x) > 0 ? Math.abs(estado.limite_max_x) : 16800;
+    const limY = Math.abs(estado.limite_max_y) > 0 ? Math.abs(estado.limite_max_y) : 15900;
     return {
         anchoMM: Math.max(1.0, limX / esc),
         altoMM: Math.max(1.0, limY / esc),
         limPulsosX: limX,
         limPulsosY: limY,
         escala: esc
+    };
+}
+
+function obtenerEstructuraFisicaMM() {
+    const ef = estado.estructura_fisica || {};
+    return {
+        xMM: Number(ef.x_mm || 490.0),
+        yMM: Number(ef.y_mm || 470.0),
+        zMM: Number(ef.z_mm || 270.0),
+        actuadorAnchoMM: Number(ef.actuador_ancho_mm || 100.0),
+        actuadorAltoMM: Number(ef.actuador_alto_mm || 70.0),
+        laserAnchoMM: Number(ef.laser_ancho_mm || 34.0),
+        laserAltoMM: Number(ef.laser_alto_mm || 34.0),
+        husilloTipo: ef.husillo_tipo || "Trapezoidal T8 (8 mm/rev)",
+        motorTipo: ef.motor_tipo || "NEMA 23 (200 pasos/rev)"
     };
 }
 
@@ -2482,7 +2509,10 @@ function calcularFactorTermicoLaser(x0, y0, x1, y1, prevPt, nextPt, quemados, sp
     let factor = 1.0;
     const mx = (x0 + x1) * 0.5;
     const my = (y0 + y1) * 0.5;
-    const radioProx = Math.max(0.65, spotMM * 4.5);
+    const lsrCfg = estado.laser || {};
+    const radioBase = Math.max(0.20, Number(lsrCfg.radio_anti_sangrado_mm ?? 0.65));
+    const factorMinPerfil = Math.max(0.70, Math.min(1.0, Number(lsrCfg.factor_esquina_min ?? 0.72)));
+    const radioProx = Math.max(radioBase, spotMM * 4.5);
 
     // 1. Control de acumulacion termica por proximidad a trazos ya grabados (evita que se engrosen o se toquen)
     const limiteIdx = quemados.length - 1;
@@ -2497,7 +2527,7 @@ function calcularFactorTermicoLaser(x0, y0, x1, y1, prevPt, nextPt, quemados, sp
         if (dMin <= 0.1) break;
     }
     if (dMin < radioProx) {
-        const proxFactor = 0.78 + 0.22 * (dMin / radioProx);
+        const proxFactor = factorMinPerfil + (1.0 - factorMinPerfil) * (dMin / radioProx);
         if (proxFactor < factor) factor = proxFactor;
     }
 
@@ -2526,12 +2556,12 @@ function calcularFactorTermicoLaser(x0, y0, x1, y1, prevPt, nextPt, quemados, sp
     }
 
     if (esquinaCerrada && lenMM < 2.5) {
-        factor = Math.min(factor, 0.86);
+        factor = Math.min(factor, Math.max(factorMinPerfil, 0.84));
     } else if (lenMM < 0.45) {
-        factor = Math.min(factor, 0.88);
+        factor = Math.min(factor, Math.max(factorMinPerfil, 0.86));
     }
 
-    return Math.max(0.72, Math.min(1.0, factor));
+    return Math.max(factorMinPerfil, Math.min(1.0, factor));
 }
 
 async function ejecutarDibujoEnMaquina() {
@@ -2657,18 +2687,23 @@ async function ejecutarDibujoEnMaquina() {
                     if (!pts || pts.length < 2) continue;
                     const infoTrazo = trazos.length > 1 ? ` trazo ${k + 1}/${trazos.length}` : "";
 
-                    // 1. Desplazarse al inicio del trazo en 0.00 W usando la cinematica estandar de Modo Dibujo
+                    // 1. Desplazarse al inicio del trazo en 0.00 W usando cinematica simetrica de viaje
                     dibujo.laserPwmActual = 0;
                     const iniX = Math.round(pts[0][0] * esc);
                     const iniY = Math.round(pts[0][1] * esc);
                     if (txtDraw) {
                         txtDraw.textContent = `Posicionando X+Y en inicio 0W${etqPasada} de #${i + 1} ${fig.nombre}${infoTrazo}...`;
                     }
-                    const okIni = await irAPuntoXYPulsos(iniX, iniY, `Posicionando 0W #${i + 1}${infoTrazo}`);
+                    const okIni = await irAPuntoXYPulsos(iniX, iniY, `Posicionando 0W #${i + 1}${infoTrazo}`, {
+                        laser_activo: false,
+                        laser_pwm: 0,
+                        velocidad_hz: velViaje
+                    });
                     if (!okIni || !dibujo.ejecutando) break pasadasLoop;
 
                     // 2. Recorrer los tramos sincronizando el PWM con cada paso de los motores (M2L)
                     //    y aplicando compensacion termica uniforme en esquinas, diagonales y lineas cercanas.
+                    let trazoEnIgnicion = true;
                     for (let j = 1; j < pts.length; j++) {
                         if (!(await esperarSiPausadoDibujo())) break pasadasLoop;
                         const x0 = pts[j - 1][0];
@@ -2721,8 +2756,11 @@ async function ejecutarDibujoEnMaquina() {
                             okSeg = await irAPuntoXYPulsos(px, py, etq, {
                                 laser_activo: true,
                                 laser_pwm: pwmSeg,
-                                velocidad_hz: velSeg
+                                velocidad_hz: velSeg,
+                                pre_ignicion: trazoEnIgnicion,
+                                corte_trazo: (j === pts.length - 1)
                             });
+                            trazoEnIgnicion = false;
                             if (okSeg) {
                                 quemadosPasada.push({
                                     x0, y0, x1, y1,
@@ -2734,7 +2772,12 @@ async function ejecutarDibujoEnMaquina() {
                                 });
                             }
                         } else {
-                            okSeg = await irAPuntoXYPulsos(px, py, etq);
+                            trazoEnIgnicion = true;
+                            okSeg = await irAPuntoXYPulsos(px, py, etq, {
+                                laser_activo: false,
+                                laser_pwm: 0,
+                                velocidad_hz: velViaje
+                            });
                         }
                         if (!okSeg || !dibujo.ejecutando) break pasadasLoop;
                         tramosHechos++;
@@ -2951,12 +2994,92 @@ function dibujarEstudioDibujo() {
     ctx.rect(areaX, areaY, areaW, areaH);
     ctx.clip();
 
-    // Fondo de mesa de trabajo calibrada (Placa Móvil Y / Puente Fijo X)
+    // Estructura fisica exterior (490 x 470 mm) descontando la zona no operable (estructura + carro actuador 100x70 mm)
+    const est = obtenerEstructuraFisicaMM();
+    if (est.xMM > anchoMM + 2 || est.yMM > altoMM + 2) {
+        const margenXMM = Math.max(0, (est.xMM - anchoMM) * 0.5);
+        const margenYMM = Math.max(0, (est.yMM - altoMM) * 0.5);
+        const fx0 = x0 - margenXMM * factor;
+        const fy0 = y0 - margenYMM * factor;
+        const fw = Math.max(est.xMM, anchoMM) * factor;
+        const fh = Math.max(est.yMM, altoMM) * factor;
+
+        ctx.fillStyle = "rgba(225, 29, 72, 0.05)";
+        ctx.fillRect(fx0, fy0, fw, fh);
+
+        // Rayado diagonal sutil en la franja no operable (margen mecanico + actuador)
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(fx0, fy0, fw, fh);
+        ctx.clip();
+        ctx.strokeStyle = "rgba(225, 29, 72, 0.11)";
+        ctx.lineWidth = 1;
+        const pasoRayado = 16;
+        for (let d = -fh; d < fw + fh; d += pasoRayado) {
+            ctx.beginPath();
+            ctx.moveTo(fx0 + d, fy0);
+            ctx.lineTo(fx0 + d - fh, fy0 + fh);
+            ctx.stroke();
+        }
+        ctx.restore();
+
+        ctx.save();
+        ctx.strokeStyle = "rgba(225, 29, 72, 0.55)";
+        ctx.lineWidth = 1.4;
+        ctx.setLineDash([6, 4]);
+        ctx.strokeRect(fx0, fy0, fw, fh);
+        ctx.restore();
+
+        ctx.fillStyle = "rgba(253, 164, 175, 0.85)";
+        ctx.font = "600 10px 'JetBrains Mono', monospace";
+        ctx.textAlign = "left";
+        ctx.fillText(
+            `ESTRUCTURA ${est.xMM.toFixed(0)}x${est.yMM.toFixed(0)}x${est.zMM.toFixed(0)} mm | NO OPERABLE (-${(est.xMM - anchoMM).toFixed(0)}mm X / -${(est.yMM - altoMM).toFixed(0)}mm Y | Carro ${est.actuadorAnchoMM}x${est.actuadorAltoMM} mm)`,
+            fx0 + 6,
+            fy0 + 13
+        );
+    }
+
+    // Fondo de mesa de trabajo OPERABLE calibrada (Placa Movil Y / Puente Fijo X)
     ctx.fillStyle = "#0d0f15";
     ctx.strokeStyle = "#06b6d4";
     ctx.lineWidth = 2;
     ctx.fillRect(x0, y0, mesaW, mesaH);
     ctx.strokeRect(x0, y0, mesaW, mesaH);
+
+    // Etiqueta superior de Zona Operable exacta
+    ctx.fillStyle = "#22d3ee";
+    ctx.font = "600 10.5px 'JetBrains Mono', monospace";
+    ctx.textAlign = "left";
+    ctx.fillText(
+        `ZONA OPERABLE: ${anchoMM.toFixed(1)} x ${altoMM.toFixed(1)} mm (${limPulsosX} x ${limPulsosY} P @ ${escala.toFixed(1)} P/mm)`,
+        x0 + 8,
+        y0 + 14
+    );
+
+    // Silueta proporcional del carro actuador (100x70 mm) y modulo laser (34x34 mm) en la posicion actual
+    const headXMM = Number(anim.x || 0) / escala;
+    const headYMM = Number(anim.y || 0) / escala;
+    const [hcX, hcY] = aCanvas(headXMM, headYMM);
+    const actW = est.actuadorAnchoMM * factor;
+    const actH = est.actuadorAltoMM * factor;
+    const lsrW = est.laserAnchoMM * factor;
+    const lsrH = est.laserAltoMM * factor;
+    if (actW >= 12 && actH >= 10) {
+        ctx.save();
+        ctx.strokeStyle = "rgba(148, 163, 184, 0.35)";
+        ctx.fillStyle = "rgba(148, 163, 184, 0.05)";
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 3]);
+        ctx.fillRect(hcX - actW * 0.5, hcY - actH * 0.5, actW, actH);
+        ctx.strokeRect(hcX - actW * 0.5, hcY - actH * 0.5, actW, actH);
+        ctx.setLineDash([]);
+        ctx.strokeStyle = "rgba(245, 158, 11, 0.55)";
+        ctx.fillStyle = "rgba(245, 158, 11, 0.08)";
+        ctx.fillRect(hcX - lsrW * 0.5, hcY - lsrH * 0.5, lsrW, lsrH);
+        ctx.strokeRect(hcX - lsrW * 0.5, hcY - lsrH * 0.5, lsrW, lsrH);
+        ctx.restore();
+    }
 
     // Etiqueta de Home (0,0) en Esquina Inferior Izquierda
     ctx.fillStyle = "#10b981";
@@ -3213,6 +3336,60 @@ function dibujarEstudioDibujo() {
         ctx.font = "600 10.5px 'JetBrains Mono', monospace";
         ctx.textAlign = "left";
         ctx.fillText(`${cajaSel.w.toFixed(1)} x ${cajaSel.h.toFixed(1)} mm`, sx0 - 4, sy0 - 10);
+        ctx.restore();
+    }
+
+    // Vista previa 1:1 en vivo de la Matriz de Calibracion 4x4 (tamano configurable en el plano)
+    if (typeof calibracionLaserUI !== "undefined" && calibracionLaserUI.abierta) {
+        const ox = Number(calibracionLaserUI.origenXMM ?? (Number(anim.x || 0) / escala));
+        const oy = Number(calibracionLaserUI.origenYMM ?? (Number(anim.y || 0) / escala));
+        const planoMM = Math.max(20, Math.min(250, Number(calibracionLaserUI.tamanoPlanoMM || 40)));
+        const gapMM = Math.max(1.0, planoMM * 0.04);
+        const celdaMM = (planoMM - 3.0 * gapMM) / 4.0;
+        const pasoMM = celdaMM + gapMM;
+        const anchoMat = 3.0 * pasoMM + celdaMM;
+        const altoMat = anchoMat;
+        const [mx0, my0] = aCanvas(ox, oy + altoMat);
+        const [mx1, my1] = aCanvas(ox + anchoMat, oy);
+        ctx.save();
+        ctx.fillStyle = "rgba(34, 211, 238, 0.06)";
+        ctx.strokeStyle = "#22d3ee";
+        ctx.lineWidth = 1.6;
+        ctx.setLineDash([5, 3]);
+        ctx.fillRect(mx0, my0, mx1 - mx0, my1 - my0);
+        ctx.strokeRect(mx0, my0, mx1 - mx0, my1 - my0);
+        ctx.setLineDash([]);
+
+        let numC = 1;
+        for (let fila = 0; fila < 4; fila++) {
+            for (let col = 0; col < 4; col++) {
+                const cx0 = ox + col * pasoMM;
+                const cy0 = oy + fila * pasoMM;
+                const [px0, py0] = aCanvas(cx0, cy0 + celdaMM);
+                const [px1, py1] = aCanvas(cx0 + celdaMM, cy0);
+                const activa = calibracionLaserUI.ejecutando && calibracionLaserUI.celdaActivaEnPrueba === numC;
+                const hecha = calibracionLaserUI.pruebaCompletada || (calibracionLaserUI.ejecutando && numC < calibracionLaserUI.celdaActivaEnPrueba);
+                const sel = calibracionLaserUI.celdaSeleccionada === numC;
+
+                ctx.strokeStyle = sel ? "#10b981" : (activa ? "#f59e0b" : (hecha ? "rgba(16,185,129,0.6)" : "rgba(34,211,238,0.45)"));
+                ctx.fillStyle = sel ? "rgba(16,185,129,0.2)" : (activa ? "rgba(245,158,11,0.22)" : "rgba(15,23,42,0.35)");
+                ctx.lineWidth = (sel || activa) ? 1.8 : 1;
+                ctx.fillRect(px0, py0, px1 - px0, py1 - py0);
+                ctx.strokeRect(px0, py0, px1 - px0, py1 - py0);
+
+                if ((px1 - px0) >= 12) {
+                    ctx.fillStyle = sel ? "#10b981" : (activa ? "#fbbf24" : "#e4e4e7");
+                    ctx.font = "600 9px 'JetBrains Mono', monospace";
+                    ctx.textAlign = "center";
+                    ctx.fillText(String(numC), (px0 + px1) * 0.5, (py0 + py1) * 0.5 + 3);
+                }
+                numC++;
+            }
+        }
+        ctx.fillStyle = "#22d3ee";
+        ctx.font = "600 10px 'JetBrains Mono', monospace";
+        ctx.textAlign = "left";
+        ctx.fillText(`MATRIZ 4x4 (${anchoMat.toFixed(1)}x${altoMat.toFixed(1)} mm @ ${escala.toFixed(1)} P/mm)`, mx0, my0 - 5);
         ctx.restore();
     }
 
@@ -3828,26 +4005,41 @@ function sincronizarEstado(data, forzarPosicionAnim = false) {
         anim.z = estado.pos_z;
     }
 
-    // 0. Actualizar selector de perfiles
+    // 0. Actualizar selector de perfiles y perfil predeterminado al iniciar
     const selProfile = document.getElementById("select-profile");
     const descPill = document.getElementById("profile-desc-text");
+    const badgeDefault = document.getElementById("profile-default-badge");
+    const btnSetDef = document.getElementById("btn-profile-set-default");
+    const idPredet = estado.perfil_predeterminado || "";
     if (selProfile && Array.isArray(estado.perfiles_disponibles)) {
         selProfile.innerHTML = "";
         let perfilActualObj = null;
+        let perfilPredetObj = null;
         estado.perfiles_disponibles.forEach(p => {
             const opt = document.createElement("option");
             opt.value = p.id;
-            opt.textContent = p.nombre || p.id;
+            const esDef = (p.id === idPredet);
+            opt.textContent = (p.nombre || p.id) + (esDef ? " [Predeterminado]" : "");
             if (p.id === estado.perfil_activo) {
                 opt.selected = true;
                 perfilActualObj = p;
             }
+            if (esDef) perfilPredetObj = p;
             selProfile.appendChild(opt);
         });
         if (descPill) {
             descPill.textContent = perfilActualObj && perfilActualObj.descripcion
                 ? perfilActualObj.descripcion
                 : `Archivo activo: perfiles/${estado.perfil_activo}.json`;
+        }
+        if (badgeDefault) {
+            const nomDef = perfilPredetObj ? (perfilPredetObj.nombre || perfilPredetObj.id) : (idPredet || "--");
+            badgeDefault.textContent = `Predeterminado al iniciar: ${nomDef}`;
+        }
+        if (btnSetDef) {
+            const yaEsDef = (estado.perfil_activo && estado.perfil_activo === idPredet);
+            btnSetDef.textContent = yaEsDef ? "Es el Perfil Predeterminado" : "Fijar como Predeterminado al Iniciar";
+            btnSetDef.disabled = Boolean(yaEsDef);
         }
     }
 
@@ -4326,14 +4518,20 @@ function dibujarSimulacionViva() {
     ctx.strokeRect(x0, y0, chasisH > 0 ? chasisW : 0, chasisH);
 
     const invY = estado.invertir_dir && estado.invertir_dir.Y;
+    const estSim = obtenerEstructuraFisicaMM();
+    const limSim = obtenerLimitesMesaMM();
     ctx.fillStyle = "#9ca3af";
-    ctx.font = "600 10.5px 'JetBrains Mono', monospace";
+    ctx.font = "600 10px 'JetBrains Mono', monospace";
     ctx.textAlign = "left";
-    ctx.fillText("ARQUITECTURA: PUENTE FIJO X + PLACA MOVIL Y", x0 + 4, y0 - 12);
+    ctx.fillText(
+        `ESTRUCTURA ${estSim.xMM.toFixed(0)}x${estSim.yMM.toFixed(0)}x${estSim.zMM.toFixed(0)}mm (T8) | OPERABLE: ${limSim.anchoMM.toFixed(1)}x${limSim.altoMM.toFixed(1)}mm @ ${limSim.escala.toFixed(1)} P/mm`,
+        x0 + 4,
+        y0 - 12
+    );
     ctx.textAlign = "right";
     ctx.fillStyle = invY ? "#10b981" : "#f59e0b";
     ctx.fillText(
-        `HOME (0,0) INF. IZQ. | ${invY ? "DIR Y: INVERTIDO (PLACA)" : "DIR Y: NORMAL"}`,
+        `CARRO ${estSim.actuadorAnchoMM}x${estSim.actuadorAltoMM}mm | LASER ${estSim.laserAnchoMM}x${estSim.laserAltoMM}mm | ${invY ? "DIR Y: INV" : "DIR Y: NORM"}`,
         x1 - 4,
         y0 - 12
     );
@@ -4996,23 +5194,58 @@ function dibujarBlueprint() {
     const altoMM = limY / esc;
     const zMM = limZ / esc;
 
+    const estBp = obtenerEstructuraFisicaMM();
+    const envXMM = Math.max(estBp.xMM, anchoMM);
+    const envYMM = Math.max(estBp.yMM, altoMM);
     const maxDrawW = w - 370;
     const maxDrawH = h - 140;
-    const scale = Math.min(maxDrawW / limX, maxDrawH / limY) * 0.85;
+    const scaleMM = Math.min(maxDrawW / envXMM, maxDrawH / envYMM) * 0.85;
 
-    const rectW = Math.max(200, limX * scale);
-    const rectH = Math.max(150, limY * scale);
+    const envW = Math.max(220, envXMM * scaleMM);
+    const envH = Math.max(170, envYMM * scaleMM);
+    const envX0 = 96;
+    const envY0 = (h - envH) / 2 - 10;
 
-    const rx0 = 100;
-    const ry0 = (h - rectH) / 2 - 10;
+    // Marco exterior: Estructura Fisica (490 x 470 x 270 mm)
+    ctx.save();
+    ctx.fillStyle = "rgba(225, 29, 72, 0.04)";
+    ctx.strokeStyle = "rgba(225, 29, 72, 0.65)";
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 4]);
+    ctx.fillRect(envX0, envY0, envW, envH);
+    ctx.strokeRect(envX0, envY0, envW, envH);
+    ctx.restore();
+
+    ctx.fillStyle = "#fda4af";
+    ctx.font = "600 10.5px 'JetBrains Mono', monospace";
+    ctx.textAlign = "left";
+    ctx.fillText(
+        `ESTRUCTURA EXTERIOR: ${estBp.xMM.toFixed(0)} x ${estBp.yMM.toFixed(0)} x ${estBp.zMM.toFixed(0)} mm | CARRO Z: ${estBp.actuadorAnchoMM}x${estBp.actuadorAltoMM} mm | LASER: ${estBp.laserAnchoMM}x${estBp.laserAltoMM} mm`,
+        envX0 + 6,
+        envY0 - 6
+    );
+
+    const rectW = Math.max(120, anchoMM * scaleMM);
+    const rectH = Math.max(100, altoMM * scaleMM);
+    const rx0 = envX0 + (envW - rectW) * 0.5;
+    const ry0 = envY0 + (envH - rectH) * 0.5;
     const rx1 = rx0 + rectW;
     const ry1 = ry0 + rectH;
 
-    ctx.fillStyle = "rgba(6, 182, 212, 0.05)";
+    ctx.fillStyle = "rgba(6, 182, 212, 0.06)";
     ctx.strokeStyle = "#06b6d4";
     ctx.lineWidth = 2;
     ctx.fillRect(rx0, ry0, rectW, rectH);
     ctx.strokeRect(rx0, ry0, rectW, rectH);
+
+    ctx.fillStyle = "#22d3ee";
+    ctx.font = "600 10.5px 'JetBrains Mono', monospace";
+    ctx.textAlign = "left";
+    ctx.fillText(
+        `AREA OPERABLE EXACTA: ${anchoMM.toFixed(1)} x ${altoMM.toFixed(1)} mm (${limX} x ${limY} P @ ${esc.toFixed(1)} P/mm)`,
+        rx0 + 8,
+        ry0 + 14
+    );
 
     ctx.strokeStyle = "rgba(255, 255, 255, 0.05)";
     ctx.lineWidth = 1;
@@ -6354,6 +6587,36 @@ const INFO_APARTADOS = {
             "<b>Lista de Figuras:</b> Muestra cada vector o imagen mapeada; haz clic para seleccionarla en el lienzo.",
             "<b>Segmentos y Tiempo Estimado:</b> Calcula la distancia total de dibujo y la duracion aproximada segun la velocidad Hz."
         ]
+    },
+    calibracion_4x4: {
+        titulo: "Flujo de Calibracion de Trazos 4x4",
+        items: [
+            "<b>1. Preparacion:</b> Enfoca el laser en el material, arma el modulo y coloca el cabezal en un area libre de al menos 40 x 40 mm.",
+            "<b>2. Ejecucion:</b> Presiona Iniciar Prueba en Material. El panel queda acoplado sobre el boton de Pausa para que observes el lienzo en vivo.",
+            "<b>3. Seleccion y Guardado:</b> Compara tu hoja fisica con la Guia Visual, elige la celda ganadora (1 a 16) y guarda; solo se actualizan los parametros del laser sin alterar los limites de pasos del perfil."
+        ]
+    },
+    calibracion_guia: {
+        titulo: "Geometria Especializada de Cada Celda (8.5 x 8.5 mm)",
+        items: [
+            "<b>Tramo H + Vertice 90 deg + Tramo V:</b> Evalua continuidad de arranque (pre-ignicion), nitidez de esquinas y simetria del haz entre X e Y.",
+            "<b>Diagonal a 45 deg:</b> Valida la compensacion euclidiana de velocidad lineal.",
+            "<b>Arco Curvo + Paralelas a 0.4 mm:</b> Detecta zonas muertas en curvas y sangrado termico (kerf excesivo si las dos lineas se funden)."
+        ]
+    },
+    calibracion_matriz: {
+        titulo: "Lectura de la Cuadricula 4x4 (Potencia vs. Velocidad)",
+        items: [
+            "<b>Eje Horizontal (Columnas):</b> Varia la Potencia (%) centrada en el material activo (-15%, -5%, +5%, +15%) dentro del rango seguro 15% a 95%.",
+            "<b>Eje Vertical (Filas):</b> Varia la Velocidad de Grabado (Hz) de abajo hacia arriba (-30%, -10%, +10%, +30%) dentro de 50 a 450 Hz, recalculando automaticamente el retraso por paso (us)."
+        ]
+    },
+    calibracion_kcal: {
+        titulo: "Autoajuste Proporcional Global (Factor K_cal)",
+        items: [
+            "<b>Densidad Energetica:</b> Calcula K_cal = (P_nueva / V_nueva) / (P_anterior / V_anterior) a partir de la celda que elegiste.",
+            "<b>Escalado Seguro:</b> Reescala la velocidad de grabado y el retraso en el resto de materiales dentro de 50 a 450 Hz; si un material requiere menos de 50 Hz, aumenta automaticamente el numero de pasadas."
+        ]
     }
 };
 
@@ -7004,6 +7267,420 @@ async function encuadrarDisenoEnMesa() {
     dibujo.ejecutando = false;
     mostrarMensajeConsola("Encuadre de diseno completado sin emision (0.00 W).");
 }
+
+// =========================================================================
+// SISTEMA DE CALIBRACION DE TRAZOS 4X4 Y AUTOAJUSTE DE PERFILES LASER
+// =========================================================================
+const calibracionLaserUI = {
+    abierta: false,
+    minimizada: false,
+    ejecutando: false,
+    pruebaCompletada: false,
+    idMaterial: null,
+    origenXMM: 0,
+    origenYMM: 0,
+    tamanoPlanoMM: 40,
+    tablaCeldas: [],
+    celdaSeleccionada: null,
+    celdaActivaEnPrueba: 0,
+    pollTimer: null,
+    arrastreIniciado: false
+};
+
+function actualizarTamanoPlanoCalibracion(valRaw) {
+    if (calibracionLaserUI.ejecutando) return;
+    const val = Math.max(20, Math.min(250, Math.round(Number(valRaw) || 40)));
+    calibracionLaserUI.tamanoPlanoMM = val;
+    const inp = document.getElementById("input-cal-tamano-plano");
+    if (inp && Number(inp.value) !== val) inp.value = String(val);
+    dibujarEstudioDibujo();
+}
+
+async function fijarPerfilComoPredeterminado() {
+    const sel = document.getElementById("select-profile");
+    const pid = (sel && sel.value) || estado.perfil_activo;
+    if (!pid) return;
+    try {
+        const resp = await fetch("/api/profiles/set_default", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: pid })
+        });
+        const data = await resp.json();
+        if (data && data.ok) {
+            sincronizarEstado(data, false);
+            mostrarMensajeConsola(data.ultimo_mensaje || `Perfil '${pid}' fijado como predeterminado al iniciar.`);
+        } else {
+            mostrarMensajeConsola((data && data.error) || "No se pudo fijar el perfil predeterminado.", true);
+        }
+    } catch (err) {
+        mostrarMensajeConsola(`Error al fijar perfil predeterminado: ${err.message || err}`, true);
+    }
+}
+
+function inicializarArrastrePanelCalibracion() {
+    if (calibracionLaserUI.arrastreIniciado) return;
+    const panel = document.getElementById("modal-calibracion-laser");
+    const handle = document.getElementById("cal-drag-handle");
+    if (!panel || !handle) return;
+    calibracionLaserUI.arrastreIniciado = true;
+
+    let arrastrando = false;
+    let offX = 0;
+    let offY = 0;
+
+    handle.addEventListener("mousedown", (e) => {
+        if (e.target.closest("button")) return;
+        arrastrando = true;
+        const rect = panel.getBoundingClientRect();
+        offX = e.clientX - rect.left;
+        offY = e.clientY - rect.top;
+        panel.style.right = "auto";
+        panel.style.bottom = "auto";
+        panel.style.left = `${rect.left}px`;
+        panel.style.top = `${rect.top}px`;
+        e.preventDefault();
+    });
+
+    window.addEventListener("mousemove", (e) => {
+        if (!arrastrando) return;
+        const maxX = Math.max(10, window.innerWidth - panel.offsetWidth - 10);
+        const maxY = Math.max(10, window.innerHeight - 50);
+        const nx = Math.max(10, Math.min(maxX, e.clientX - offX));
+        const ny = Math.max(10, Math.min(maxY, e.clientY - offY));
+        panel.style.left = `${nx}px`;
+        panel.style.top = `${ny}px`;
+    });
+
+    window.addEventListener("mouseup", () => {
+        arrastrando = false;
+    });
+}
+
+function alternarMinimizarCalibracionLaser() {
+    const panel = document.getElementById("modal-calibracion-laser");
+    const btn = document.getElementById("btn-cal-toggle-min");
+    if (!panel) return;
+    calibracionLaserUI.minimizada = !calibracionLaserUI.minimizada;
+    panel.classList.toggle("minimized", calibracionLaserUI.minimizada);
+    if (btn) btn.textContent = calibracionLaserUI.minimizada ? "+" : "_";
+}
+
+function _construirPreviewTabla4x4(idMaterial) {
+    const presets = estado.presets_laser_5w || {};
+    const pr = presets[idMaterial] || {};
+    const pn = pr.parametros_nucleares || {};
+    const potBase = Number(pn.potencia_pct ?? pr.potencia_pct ?? estado.laser?.potencia_pct ?? 65);
+    const velBase = Number(pn.velocidad_grabado_hz ?? pr.velocidad_grabado_hz ?? estado.laser?.velocidad_grabado_hz ?? 180);
+    const deltasPot = [-15, -5, 5, 15];
+    const factoresVel = [0.70, 0.90, 1.10, 1.30];
+
+    const tabla = [];
+    let num = 1;
+    for (let fila = 0; fila < 4; fila++) {
+        const vel = Math.max(50, Math.min(450, Math.round(velBase * factoresVel[fila])));
+        const delayUs = Math.round(1000000 / vel);
+        for (let col = 0; col < 4; col++) {
+            const pot = Math.max(15, Math.min(95, Math.round((potBase + deltasPot[col]) * 10) / 10));
+            tabla.push({
+                celda: num,
+                fila,
+                columna: col,
+                potencia_pct: pot,
+                velocidad_grabado_hz: vel,
+                retraso_paso_us: delayUs
+            });
+            num++;
+        }
+    }
+    return tabla;
+}
+
+function abrirModalCalibracionLaser() {
+    if (anim.enMovimiento || dibujo.ejecutando) {
+        mostrarMensajeConsola("Espera a que finalice el movimiento actual antes de abrir la calibracion.", true);
+        return;
+    }
+
+    const lsr = estado.laser || {};
+    const idMat = lsr.preset_material || document.getElementById("select-laser-preset")?.value || "madera_grabado_fino";
+    const presets = estado.presets_laser_5w || {};
+    const infoMat = presets[idMat] || { nombre: idMat };
+    const esc = Math.max(0.01, Number(estado.pasos_por_mm || 50));
+    const xMM = Number((Number(estado.pos_x || 0) / esc).toFixed(1));
+    const yMM = Number((Number(estado.pos_y || 0) / esc).toFixed(1));
+
+    calibracionLaserUI.abierta = true;
+    calibracionLaserUI.minimizada = false;
+    calibracionLaserUI.ejecutando = false;
+    calibracionLaserUI.pruebaCompletada = false;
+    calibracionLaserUI.idMaterial = idMat;
+    calibracionLaserUI.origenXMM = xMM;
+    calibracionLaserUI.origenYMM = yMM;
+    calibracionLaserUI.celdaSeleccionada = null;
+    calibracionLaserUI.celdaActivaEnPrueba = 0;
+    calibracionLaserUI.tablaCeldas = _construirPreviewTabla4x4(idMat);
+
+    const lblMat = document.getElementById("cal-lbl-material");
+    const lblPos = document.getElementById("cal-lbl-posicion");
+    const txtStatus = document.getElementById("cal-status-text");
+    const fillBar = document.getElementById("cal-progress-fill");
+    const detail = document.getElementById("cal-selected-detail");
+    const btnIniciar = document.getElementById("btn-cal-iniciar");
+    const btnAbortar = document.getElementById("btn-cal-abortar");
+    const btnGuardar = document.getElementById("btn-cal-guardar");
+    const btnMin = document.getElementById("btn-cal-toggle-min");
+    const chkGlobal = document.getElementById("chk-cal-factor-global");
+
+    if (lblMat) lblMat.textContent = infoMat.nombre || idMat;
+    if (lblPos) lblPos.textContent = `X: ${xMM.toFixed(1)} mm | Y: ${yMM.toFixed(1)} mm (${esc.toFixed(1)} P/mm)`;
+    if (txtStatus) txtStatus.textContent = "Panel acoplado sobre el boton de pausa para que observes el lienzo en vivo. Presiona Iniciar Prueba en Material.";
+    if (fillBar) fillBar.style.width = "0%";
+    if (detail) detail.textContent = "Ejecuta la prueba fisica para habilitar la seleccion interactiva de las 16 celdas (1 a 16).";
+    if (btnIniciar) btnIniciar.disabled = false;
+    if (btnAbortar) btnAbortar.disabled = true;
+    if (btnGuardar) btnGuardar.disabled = true;
+    if (btnMin) btnMin.textContent = "_";
+    if (chkGlobal) chkGlobal.checked = false;
+
+    renderizarCuadriculaCalibracion4x4();
+    inicializarArrastrePanelCalibracion();
+
+    // Panel flotante NO bloqueante (sin modal-backdrop) para dejar visibles el lienzo y el boton de pausa
+    const modal = document.getElementById("modal-calibracion-laser");
+    if (modal) {
+        modal.classList.remove("hidden", "minimized");
+    }
+    dibujarEstudioDibujo();
+}
+
+function cerrarModalCalibracionLaser() {
+    if (calibracionLaserUI.ejecutando) {
+        mostrarMensajeConsola("Hay una prueba de calibracion en curso. Usa Abortar Emergencia (0 W) para detenerla.", true);
+        return;
+    }
+    if (calibracionLaserUI.pollTimer) {
+        clearInterval(calibracionLaserUI.pollTimer);
+        calibracionLaserUI.pollTimer = null;
+    }
+    calibracionLaserUI.abierta = false;
+    calibracionLaserUI.minimizada = false;
+    const modal = document.getElementById("modal-calibracion-laser");
+    if (modal) modal.classList.add("hidden");
+    dibujarEstudioDibujo();
+}
+
+function renderizarCuadriculaCalibracion4x4() {
+    const grid = document.getElementById("cal-matrix-grid");
+    if (!grid) return;
+
+    const tabla = calibracionLaserUI.tablaCeldas || [];
+    const byCoord = {};
+    tabla.forEach(c => {
+        byCoord[`${c.fila}_${c.columna}`] = c;
+    });
+
+    grid.innerHTML = "";
+    // Renderizar de fila 3 (arriba = mayor velocidad) a fila 0 (abajo = menor velocidad)
+    // para que coincida exactamente con la orientacion fisica Y+ hacia arriba de la mesa CNC.
+    for (let fila = 3; fila >= 0; fila--) {
+        for (let col = 0; col < 4; col++) {
+            const c = byCoord[`${fila}_${col}`];
+            if (!c) continue;
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = "cal-cell-btn";
+            if (calibracionLaserUI.celdaSeleccionada === c.celda) {
+                btn.classList.add("selected");
+            }
+            if (calibracionLaserUI.ejecutando && calibracionLaserUI.celdaActivaEnPrueba === c.celda) {
+                btn.classList.add("running");
+            }
+            btn.disabled = !calibracionLaserUI.pruebaCompletada || calibracionLaserUI.ejecutando;
+            btn.onclick = () => seleccionarCeldaCalibracion(c.celda);
+            btn.innerHTML =
+                `<span class="cal-cell-num">#${c.celda}</span>` +
+                `<span class="cal-cell-meta">${c.potencia_pct}% | ${c.velocidad_grabado_hz} Hz</span>`;
+            grid.appendChild(btn);
+        }
+    }
+}
+
+function seleccionarCeldaCalibracion(numCelda) {
+    if (!calibracionLaserUI.pruebaCompletada || calibracionLaserUI.ejecutando) return;
+    calibracionLaserUI.celdaSeleccionada = numCelda;
+    const info = (calibracionLaserUI.tablaCeldas || []).find(c => c.celda === numCelda);
+    const detail = document.getElementById("cal-selected-detail");
+    const btnGuardar = document.getElementById("btn-cal-guardar");
+
+    if (detail && info) {
+        detail.textContent =
+            `Celda seleccionada #${info.celda} -> Potencia: ${info.potencia_pct}% | ` +
+            `Velocidad Grabado: ${info.velocidad_grabado_hz} Hz | Retraso paso: ${info.retraso_paso_us} us`;
+    }
+    if (btnGuardar) btnGuardar.disabled = !info;
+    renderizarCuadriculaCalibracion4x4();
+    dibujarEstudioDibujo();
+}
+
+async function iniciarPruebaMatrizCalibracion() {
+    if (calibracionLaserUI.ejecutando) return;
+
+    const idMat = calibracionLaserUI.idMaterial || estado.laser?.preset_material || "madera_grabado_fino";
+    const esc = Math.max(0.01, Number(estado.pasos_por_mm || 50));
+    const origenX = Number((Number(estado.pos_x || 0) / esc).toFixed(3));
+    const origenY = Number((Number(estado.pos_y || 0) / esc).toFixed(3));
+    calibracionLaserUI.origenXMM = origenX;
+    calibracionLaserUI.origenYMM = origenY;
+
+    calibracionLaserUI.ejecutando = true;
+    calibracionLaserUI.pruebaCompletada = false;
+    calibracionLaserUI.celdaSeleccionada = null;
+    calibracionLaserUI.celdaActivaEnPrueba = 1;
+
+    const txtStatus = document.getElementById("cal-status-text");
+    const fillBar = document.getElementById("cal-progress-fill");
+    const btnIniciar = document.getElementById("btn-cal-iniciar");
+    const btnAbortar = document.getElementById("btn-cal-abortar");
+    const btnGuardar = document.getElementById("btn-cal-guardar");
+
+    if (btnIniciar) btnIniciar.disabled = true;
+    if (btnAbortar) btnAbortar.disabled = false;
+    if (btnGuardar) btnGuardar.disabled = true;
+    if (txtStatus) txtStatus.textContent = `Ejecutando matriz 4x4 desde (${origenX.toFixed(1)}, ${origenY.toFixed(1)}) mm...`;
+    if (fillBar) fillBar.style.width = "4%";
+    renderizarCuadriculaCalibracion4x4();
+
+    if (calibracionLaserUI.pollTimer) clearInterval(calibracionLaserUI.pollTimer);
+    calibracionLaserUI.pollTimer = setInterval(async () => {
+        if (!calibracionLaserUI.ejecutando) return;
+        try {
+            const r = await fetch("/api/laser/calibracion/estado");
+            const d = await r.json();
+            if (d && d.ok && d.calibracion) {
+                const c = d.calibracion;
+                calibracionLaserUI.celdaActivaEnPrueba = Number(c.celda_actual || 0);
+                if (c.pos_x !== undefined && c.pos_y !== undefined) {
+                    anim.x = Number(c.pos_x);
+                    anim.y = Number(c.pos_y);
+                    const lblPos = document.getElementById("cal-lbl-posicion");
+                    if (lblPos && c.pos_x_mm !== undefined && c.pos_y_mm !== undefined) {
+                        lblPos.textContent = `X: ${Number(c.pos_x_mm).toFixed(1)} mm | Y: ${Number(c.pos_y_mm).toFixed(1)} mm (${Number(c.pasos_por_mm || esc).toFixed(1)} P/mm)`;
+                    }
+                    dibujarEstudioDibujo();
+                    dibujarSimulacionViva();
+                }
+                if (fillBar) fillBar.style.width = `${Math.max(4, Number(c.progreso_pct || 0))}%`;
+                if (txtStatus && c.celda_actual > 0) {
+                    txtStatus.textContent = `Grabando cuadrante ${c.celda_actual}/${c.total_celdas || 16} (${c.progreso_pct || 0}%)...`;
+                }
+                renderizarCuadriculaCalibracion4x4();
+            }
+        } catch (_e) {
+            // Ignorar error transitorio de polling
+        }
+    }, 450);
+
+    try {
+        const resp = await fetch("/api/laser/calibracion/ejecutar_matriz", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                id_material: idMat,
+                origen_x: origenX,
+                origen_y: origenY,
+                tamano_plano_mm: calibracionLaserUI.tamanoPlanoMM || 40
+            })
+        });
+        const data = await resp.json();
+
+        if (calibracionLaserUI.pollTimer) {
+            clearInterval(calibracionLaserUI.pollTimer);
+            calibracionLaserUI.pollTimer = null;
+        }
+        calibracionLaserUI.ejecutando = false;
+        calibracionLaserUI.celdaActivaEnPrueba = 0;
+
+        if (data && data.ok) {
+            sincronizarEstado(data, true);
+            if (Array.isArray(data.tabla_celdas) && data.tabla_celdas.length === 16) {
+                calibracionLaserUI.tablaCeldas = data.tabla_celdas;
+            }
+            if (data.abortado) {
+                calibracionLaserUI.pruebaCompletada = false;
+                if (txtStatus) txtStatus.textContent = "Prueba abortada por seguridad. Laser apagado a 0.00 W.";
+                if (fillBar) fillBar.style.width = "0%";
+            } else {
+                calibracionLaserUI.pruebaCompletada = true;
+                if (txtStatus) txtStatus.textContent = "Prueba fisica completada. Contrasta tu hoja con la guia visual y haz clic en la celda ganadora (1 a 16).";
+                if (fillBar) fillBar.style.width = "100%";
+            }
+        } else {
+            calibracionLaserUI.pruebaCompletada = false;
+            if (txtStatus) txtStatus.textContent = (data && data.error) || "Error al ejecutar la matriz de calibracion.";
+            if (fillBar) fillBar.style.width = "0%";
+            mostrarMensajeConsola((data && data.error) || "Error en calibracion 4x4.", true);
+        }
+    } catch (err) {
+        if (calibracionLaserUI.pollTimer) {
+            clearInterval(calibracionLaserUI.pollTimer);
+            calibracionLaserUI.pollTimer = null;
+        }
+        calibracionLaserUI.ejecutando = false;
+        calibracionLaserUI.pruebaCompletada = false;
+        if (txtStatus) txtStatus.textContent = `Error de red durante la calibracion: ${err.message || err}`;
+        mostrarMensajeConsola(`Error de red en calibracion 4x4: ${err.message || err}`, true);
+    } finally {
+        if (btnIniciar) btnIniciar.disabled = false;
+        if (btnAbortar) btnAbortar.disabled = true;
+        renderizarCuadriculaCalibracion4x4();
+    }
+}
+
+async function abortarPruebaMatrizCalibracion() {
+    const txtStatus = document.getElementById("cal-status-text");
+    if (txtStatus) txtStatus.textContent = "Enviando paro de emergencia y corte de laser a 0.00 W...";
+    try {
+        await fetch("/api/laser/calibracion/abortar", { method: "POST" });
+    } catch (_e) {
+        // Fallback inmediato
+    }
+    await apagarLaserEmergencia(true);
+}
+
+async function guardarResultadoCalibracionLaser() {
+    if (!calibracionLaserUI.celdaSeleccionada) return;
+    const btnGuardar = document.getElementById("btn-cal-guardar");
+    const chkGlobal = document.getElementById("chk-cal-factor-global");
+    const aplicarGlobal = Boolean(chkGlobal && chkGlobal.checked);
+
+    if (btnGuardar) btnGuardar.disabled = true;
+    try {
+        const resp = await fetch("/api/laser/calibracion/guardar_resultado", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                id_material: calibracionLaserUI.idMaterial,
+                celda_seleccionada: calibracionLaserUI.celdaSeleccionada,
+                aplicar_factor_global: aplicarGlobal
+            })
+        });
+        const data = await resp.json();
+        if (data && data.ok) {
+            sincronizarEstado(data, true);
+            actualizarEstadisticasDibujo();
+            mostrarMensajeConsola(data.ultimo_mensaje || "Perfil de material calibrado correctamente.");
+            cerrarModalCalibracionLaser();
+        } else {
+            mostrarMensajeConsola((data && data.error) || "No se pudo guardar la calibracion.", true);
+            if (btnGuardar) btnGuardar.disabled = false;
+        }
+    } catch (err) {
+        mostrarMensajeConsola(`Error al guardar calibracion: ${err.message || err}`, true);
+        if (btnGuardar) btnGuardar.disabled = false;
+    }
+}
+
 
 
 

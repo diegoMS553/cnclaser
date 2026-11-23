@@ -8,6 +8,13 @@ import webbrowser
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify, Response
 from opencv_lasergrbl import procesar_imagen_opencv
+from laser_calibration import (
+    VEL_MIN_SEGURA_HZ,
+    VEL_MAX_SEGURA_HZ,
+    normalizar_preset_material,
+    generar_matriz_calibracion_4x4,
+    aplicar_factor_global_materiales
+)
 import serial
 import serial.tools.list_ports
 
@@ -18,6 +25,9 @@ PUERTO_DEFECTO = "COM3"
 BAUD_RATE = 115200
 CARPETA_PERFILES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "perfiles")
 os.makedirs(CARPETA_PERFILES, exist_ok=True)
+ARCHIVO_MATERIALES_LASER = os.path.join(CARPETA_PERFILES, "materiales_laser.json")
+ARCHIVO_CONFIG_APP = os.path.join(CARPETA_PERFILES, "config_app.json")
+ARCHIVOS_SISTEMA_PERFILES = {"materiales_laser.json", "config_app.json"}
 
 # Tabla 1: Microstep / Pulse según (S1, S2, S3) donde True = ON, False = OFF
 TABLA_MICROSTEP = {
@@ -43,100 +53,288 @@ TABLA_CORRIENTE = {
     (False, False, False): {"current_a": 3.5, "pk_current_a": 4.0},
 }
 
-# Tabla 3: Presets de Calibración de Materiales para Módulo Láser de Diodo de 5W Ópticos
-# Las frecuencias de grabado están calibradas para garantizar tiempo de exposición térmica continuo
-# en cada paso del motor (sin dejar líneas punteadas ni perder pasos en los motores NEMA).
-PRESETS_LASER_5W = {
+# Tabla 3: Presets de Calibracion de Materiales para Modulo Laser de Diodo de 5W Opticos
+# Esquema enriquecido con parametros_nucleares y parametros_geometricos_derivados.
+# Los perfiles de corte operan en 85%-90% con menor velocidad y 3-4 pasadas limpias
+# para evitar carbonizacion excesiva en los bordes.
+_PRESETS_LASER_BASE = {
     "papel_marcado": {
+        "id_material": "papel_marcado",
         "nombre": "Papel / Cartulina (Grabado Fino)",
-        "descripcion": "Marcado superficial continuo de trazos y dibujo vectorial sin perforar el papel.",
+        "descripcion": "Recalibrado empiricamente: 60% @ 140 Hz con pre-ignicion 25 ms para trazo continuo sin perforar.",
         "modo_operacion": "grabado_linea",
-        "potencia_pct": 35,
-        "velocidad_grabado_hz": 240,
-        "velocidad_viaje_hz": 500,
-        "pasadas": 1,
-        "spot_mm": 0.12
+        "parametros_nucleares": {
+            "potencia_pct": 60,
+            "velocidad_grabado_hz": 140,
+            "velocidad_viaje_hz": 500,
+            "retraso_paso_us": 7143,
+            "retraso_ignicion_ms": 25,
+            "retraso_corte_ms": 1
+        },
+        "parametros_geometricos_derivados": {
+            "spot_kerf_mm": 0.12,
+            "balance_anisotropia_xy_pct": 0.0,
+            "factor_esquina_min": 0.72,
+            "radio_anti_sangrado_mm": 0.65,
+            "z_offset_foco_pulsos": 0,
+            "pasadas": 1,
+            "z_paso_por_pasada_pulsos": 0
+        }
+    },
+    "papel_cascaron_300g": {
+        "id_material": "papel_cascaron_300g",
+        "nombre": "Papel Cascaron 300 g/m2 (Grabado Continuo)",
+        "descripcion": "Calibrado con circulo 87.58 mm: 82% @ 115 Hz y pre-ignicion 30 ms para trazo uniforme sin zonas muertas.",
+        "modo_operacion": "grabado_linea",
+        "parametros_nucleares": {
+            "potencia_pct": 82,
+            "velocidad_grabado_hz": 115,
+            "velocidad_viaje_hz": 500,
+            "retraso_paso_us": 8696,
+            "retraso_ignicion_ms": 30,
+            "retraso_corte_ms": 2
+        },
+        "parametros_geometricos_derivados": {
+            "spot_kerf_mm": 0.14,
+            "balance_anisotropia_xy_pct": 0.0,
+            "factor_esquina_min": 0.72,
+            "radio_anti_sangrado_mm": 0.65,
+            "z_offset_foco_pulsos": 0,
+            "pasadas": 1,
+            "z_paso_por_pasada_pulsos": 0
+        }
     },
     "carton_grabado": {
+        "id_material": "carton_grabado",
         "nombre": "Carton Corrugado (Grabado Superficial)",
-        "descripcion": "Grabado continuo de alto contraste sobre carton sin atravesar la primera capa.",
+        "descripcion": "Recalibrado empiricamente: 75% @ 125 Hz para grabado continuo de alto contraste sin atravesar.",
         "modo_operacion": "grabado_linea",
-        "potencia_pct": 55,
-        "velocidad_grabado_hz": 200,
-        "velocidad_viaje_hz": 500,
-        "pasadas": 1,
-        "spot_mm": 0.15
+        "parametros_nucleares": {
+            "potencia_pct": 75,
+            "velocidad_grabado_hz": 125,
+            "velocidad_viaje_hz": 500,
+            "retraso_paso_us": 8000,
+            "retraso_ignicion_ms": 30,
+            "retraso_corte_ms": 1
+        },
+        "parametros_geometricos_derivados": {
+            "spot_kerf_mm": 0.15,
+            "balance_anisotropia_xy_pct": 0.0,
+            "factor_esquina_min": 0.72,
+            "radio_anti_sangrado_mm": 0.65,
+            "z_offset_foco_pulsos": 0,
+            "pasadas": 1,
+            "z_paso_por_pasada_pulsos": 0
+        }
     },
     "carton_corte": {
-        "nombre": "Carton / Cartulina (Corte 5W)",
-        "descripcion": "Corte vectorial en 2 pasadas con alta potencia de 5W.",
+        "id_material": "carton_corte",
+        "nombre": "Carton / Cascaron 300g (Corte Pasante 5W)",
+        "descripcion": "Recalibrado empiricamente: 88% @ 85 Hz en 4 pasadas limpias para corte pasante sin carbonizar.",
         "modo_operacion": "corte",
-        "potencia_pct": 90,
-        "velocidad_grabado_hz": 120,
-        "velocidad_viaje_hz": 500,
-        "pasadas": 2,
-        "spot_mm": 0.15
+        "parametros_nucleares": {
+            "potencia_pct": 88,
+            "velocidad_grabado_hz": 85,
+            "velocidad_viaje_hz": 500,
+            "retraso_paso_us": 11765,
+            "retraso_ignicion_ms": 35,
+            "retraso_corte_ms": 2
+        },
+        "parametros_geometricos_derivados": {
+            "spot_kerf_mm": 0.15,
+            "balance_anisotropia_xy_pct": 0.0,
+            "factor_esquina_min": 0.72,
+            "radio_anti_sangrado_mm": 0.65,
+            "z_offset_foco_pulsos": 0,
+            "pasadas": 4,
+            "z_paso_por_pasada_pulsos": 0
+        }
     },
     "madera_grabado_fino": {
+        "id_material": "madera_grabado_fino",
         "nombre": "Madera Balsa / Triplay Claro (Grabado)",
-        "descripcion": "Grabado continuo y nitido de trazos, bocetos y texto sobre madera clara.",
+        "descripcion": "Recalibrado empiricamente: 78% @ 120 Hz para eliminar zonas muertas en curvas y trazos finos.",
         "modo_operacion": "grabado_linea",
-        "potencia_pct": 65,
-        "velocidad_grabado_hz": 180,
-        "velocidad_viaje_hz": 500,
-        "pasadas": 1,
-        "spot_mm": 0.15
+        "parametros_nucleares": {
+            "potencia_pct": 78,
+            "velocidad_grabado_hz": 120,
+            "velocidad_viaje_hz": 500,
+            "retraso_paso_us": 8333,
+            "retraso_ignicion_ms": 30,
+            "retraso_corte_ms": 1
+        },
+        "parametros_geometricos_derivados": {
+            "spot_kerf_mm": 0.15,
+            "balance_anisotropia_xy_pct": 0.0,
+            "factor_esquina_min": 0.72,
+            "radio_anti_sangrado_mm": 0.65,
+            "z_offset_foco_pulsos": 0,
+            "pasadas": 1,
+            "z_paso_por_pasada_pulsos": 0
+        }
     },
     "madera_grabado_profundo": {
+        "id_material": "madera_grabado_profundo",
         "nombre": "MDF / Madera Dura (Grabado Oscuro)",
-        "descripcion": "Grabado oscuro con mayor penetracion termica en MDF y pino.",
+        "descripcion": "Recalibrado empiricamente: 85% @ 100 Hz con compensacion diagonal y pre-ignicion 35 ms para grosor uniforme.",
         "modo_operacion": "grabado_relleno",
-        "potencia_pct": 85,
-        "velocidad_grabado_hz": 130,
-        "velocidad_viaje_hz": 500,
-        "pasadas": 1,
-        "spot_mm": 0.15
+        "parametros_nucleares": {
+            "potencia_pct": 85,
+            "velocidad_grabado_hz": 100,
+            "velocidad_viaje_hz": 500,
+            "retraso_paso_us": 10000,
+            "retraso_ignicion_ms": 35,
+            "retraso_corte_ms": 2
+        },
+        "parametros_geometricos_derivados": {
+            "spot_kerf_mm": 0.15,
+            "balance_anisotropia_xy_pct": 0.0,
+            "factor_esquina_min": 0.72,
+            "radio_anti_sangrado_mm": 0.65,
+            "z_offset_foco_pulsos": 0,
+            "pasadas": 1,
+            "z_paso_por_pasada_pulsos": 0
+        }
     },
     "madera_fotograbado": {
+        "id_material": "madera_fotograbado",
         "nombre": "Madera Clara (Fotograbado Dithering 5W)",
-        "descripcion": "Optimizado para imagenes procesadas con Dithering, Raster PWM o Line2Line.",
+        "descripcion": "Recalibrado empiricamente: 76% @ 125 Hz para respuesta continua en dithering y raster PWM.",
         "modo_operacion": "grabado_tonal",
-        "potencia_pct": 70,
-        "velocidad_grabado_hz": 180,
-        "velocidad_viaje_hz": 500,
-        "pasadas": 1,
-        "spot_mm": 0.15
+        "parametros_nucleares": {
+            "potencia_pct": 76,
+            "velocidad_grabado_hz": 125,
+            "velocidad_viaje_hz": 500,
+            "retraso_paso_us": 8000,
+            "retraso_ignicion_ms": 25,
+            "retraso_corte_ms": 1
+        },
+        "parametros_geometricos_derivados": {
+            "spot_kerf_mm": 0.15,
+            "balance_anisotropia_xy_pct": 0.0,
+            "factor_esquina_min": 0.72,
+            "radio_anti_sangrado_mm": 0.65,
+            "z_offset_foco_pulsos": 0,
+            "pasadas": 1,
+            "z_paso_por_pasada_pulsos": 0
+        }
     },
     "madera_corte_balsa_3mm": {
+        "id_material": "madera_corte_balsa_3mm",
         "nombre": "Madera Balsa / Triplay 2-3 mm (Corte 5W)",
-        "descripcion": "Corte multipaso a maxima potencia para balsa y triplay ligero.",
+        "descripcion": "Recalibrado empiricamente: 90% @ 75 Hz en 4 pasadas limpias evitando carbonizacion excesiva del 100%.",
         "modo_operacion": "corte",
-        "potencia_pct": 100,
-        "velocidad_grabado_hz": 100,
-        "velocidad_viaje_hz": 500,
-        "pasadas": 3,
-        "spot_mm": 0.15
+        "parametros_nucleares": {
+            "potencia_pct": 90,
+            "velocidad_grabado_hz": 75,
+            "velocidad_viaje_hz": 500,
+            "retraso_paso_us": 13333,
+            "retraso_ignicion_ms": 40,
+            "retraso_corte_ms": 2
+        },
+        "parametros_geometricos_derivados": {
+            "spot_kerf_mm": 0.15,
+            "balance_anisotropia_xy_pct": 0.0,
+            "factor_esquina_min": 0.72,
+            "radio_anti_sangrado_mm": 0.65,
+            "z_offset_foco_pulsos": 0,
+            "pasadas": 4,
+            "z_paso_por_pasada_pulsos": 0
+        }
     },
     "cuero_grabado": {
+        "id_material": "cuero_grabado",
         "nombre": "Cuero / Piel Sintetica (Grabado)",
-        "descripcion": "Marcado continuo y limpio en cuero natural o sintetico a potencia controlada.",
+        "descripcion": "Recalibrado empiricamente: 72% @ 130 Hz para marcado continuo y definido en cuero.",
         "modo_operacion": "grabado_relleno",
-        "potencia_pct": 50,
-        "velocidad_grabado_hz": 200,
-        "velocidad_viaje_hz": 500,
-        "pasadas": 1,
-        "spot_mm": 0.15
+        "parametros_nucleares": {
+            "potencia_pct": 72,
+            "velocidad_grabado_hz": 130,
+            "velocidad_viaje_hz": 500,
+            "retraso_paso_us": 7692,
+            "retraso_ignicion_ms": 25,
+            "retraso_corte_ms": 1
+        },
+        "parametros_geometricos_derivados": {
+            "spot_kerf_mm": 0.15,
+            "balance_anisotropia_xy_pct": 0.0,
+            "factor_esquina_min": 0.72,
+            "radio_anti_sangrado_mm": 0.65,
+            "z_offset_foco_pulsos": 0,
+            "pasadas": 1,
+            "z_paso_por_pasada_pulsos": 0
+        }
     },
     "acrilico_oscuro_grabado": {
+        "id_material": "acrilico_oscuro_grabado",
         "nombre": "Acrilico Negro / Opaco (Grabado)",
-        "descripcion": "Grabado superficial mate en acrilico oscuro opaco (no transparente).",
+        "descripcion": "Recalibrado empiricamente: 82% @ 115 Hz para completar 100% del trazo sin cortes parciales.",
         "modo_operacion": "grabado_relleno",
-        "potencia_pct": 75,
-        "velocidad_grabado_hz": 150,
-        "velocidad_viaje_hz": 500,
-        "pasadas": 1,
-        "spot_mm": 0.15
+        "parametros_nucleares": {
+            "potencia_pct": 82,
+            "velocidad_grabado_hz": 115,
+            "velocidad_viaje_hz": 500,
+            "retraso_paso_us": 8696,
+            "retraso_ignicion_ms": 30,
+            "retraso_corte_ms": 1
+        },
+        "parametros_geometricos_derivados": {
+            "spot_kerf_mm": 0.15,
+            "balance_anisotropia_xy_pct": 0.0,
+            "factor_esquina_min": 0.72,
+            "radio_anti_sangrado_mm": 0.65,
+            "z_offset_foco_pulsos": 0,
+            "pasadas": 1,
+            "z_paso_por_pasada_pulsos": 0
+        }
     }
+}
+
+PRESETS_LASER_5W = {
+    k: normalizar_preset_material(k, v)
+    for k, v in _PRESETS_LASER_BASE.items()
+}
+PRESETS_MATERIALES_LASER = PRESETS_LASER_5W
+
+
+def cargar_materiales_laser_archivo():
+    """Carga calibraciones previas de materiales desde perfiles/materiales_laser.json."""
+    if not os.path.exists(ARCHIVO_MATERIALES_LASER):
+        return
+    try:
+        with open(ARCHIVO_MATERIALES_LASER, "r", encoding="utf-8") as fh:
+            datos = json.load(fh)
+        if isinstance(datos, dict):
+            for clave, item in datos.items():
+                if isinstance(item, dict):
+                    PRESETS_LASER_5W[clave] = normalizar_preset_material(clave, item)
+    except Exception:
+        pass
+
+
+def guardar_materiales_laser_archivo():
+    """Guarda atomicamente los perfiles de material calibrados en perfiles/materiales_laser.json."""
+    tmp_path = ARCHIVO_MATERIALES_LASER + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as fh:
+        json.dump(PRESETS_LASER_5W, fh, indent=4, ensure_ascii=False)
+    os.replace(tmp_path, ARCHIVO_MATERIALES_LASER)
+
+
+cargar_materiales_laser_archivo()
+
+calibracion_lock = threading.Lock()
+calibracion_laser_estado = {
+    "ejecutando": False,
+    "abortar": False,
+    "id_material": None,
+    "nombre_material": "",
+    "celda_actual": 0,
+    "total_celdas": 16,
+    "progreso_pct": 0.0,
+    "tabla_celdas": [],
+    "area_mm": None,
+    "abortado": False,
+    "error": None
 }
 
 serial_lock = threading.Lock()
@@ -191,6 +389,9 @@ estado_maquina = {
         "duracion_pulso_ms": 250,
         "velocidad_grabado_hz": 180,  # Frecuencia sincronizada en pulsos/s durante quemado laser (~5.5 ms por paso)
         "velocidad_viaje_hz": 500,    # Frecuencia segura en pulsos/s en desplazamientos en vacio (0W)
+        "retraso_paso_us": 5556,      # Periodo total por paso en microsegundos (1,000,000 / velocidad_grabado_hz)
+        "retraso_ignicion_ms": 25,    # Retardo de pre-ignicion (dwell) al iniciar cada vector cerrado (ms)
+        "retraso_corte_ms": 1,        # Retardo de asentamiento tras corte a 0W antes de viaje rapido (ms)
         "pasadas": 1,                 # Pasadas por trazo (1..20)
         "pausa_enfriamiento_ms": 0,
         "spot_mm": 0.15,              # Diametro del punto optico enfocado (mm)
@@ -200,8 +401,11 @@ estado_maquina = {
         "z_paso_pasada_pulsos": 0,    # Descenso Z adicional por cada pasada en modo corte
         "compensacion_diagonal": True,# Velocidad lineal euclidiana constante en todos los angulos (evita trazos delgados a 45 deg)
         "balance_haz_xy_pct": 0.0,    # Balance entre ejes X/Y (-35..+35 %) por haz rectangular del diodo 450nm
+        "factor_esquina_min": 0.72,   # Atenuacion minima de potencia en esquinas cerradas (0.70..1.00)
+        "radio_anti_sangrado_mm": 0.65, # Radio de proximidad termica anti-sangrado (mm)
         "proteccion_esquinas": True,  # Atenuacion termica progresiva en esquinas cerradas y trazos cercanos
         "evitar_doble_quemado": True, # Omite segmentos duplicados o superpuestos en la misma pasada
+        "simetria_xy_verificada": True,
         "frecuencia_pwm_hz": 5000,
         "pwm_actual": 0,
         "watts_actuales": 0.0
@@ -240,16 +444,28 @@ estado_maquina = {
         "z_switch_instalado": False,
         "autohome_completado": False
     },
-    "perfil_activo": "estacion_estandar_16x",
-    "microstep": "16",
-    "pulse_rev": 3200,
-    "grados_por_pulso": 0.1125,
+    "perfil_activo": "dia_17",
+    "perfil_predeterminado": "dia_17",
+    "microstep": "2/A",
+    "pulse_rev": 400,
+    "grados_por_pulso": 0.9,
     "current_a": 2.0,
     "pk_current_a": 2.2,
     "reduccion_amperaje_activa": True,
     "velocidad_hz": 500,
-    "mm_por_rev": 40.0,
-    "pasos_por_mm": 80.0,
+    "mm_por_rev": 8.0,
+    "pasos_por_mm": 50.0,
+    "estructura_fisica": {
+        "x_mm": 490.0,
+        "y_mm": 470.0,
+        "z_mm": 270.0,
+        "actuador_ancho_mm": 100.0,
+        "actuador_alto_mm": 70.0,
+        "laser_ancho_mm": 34.0,
+        "laser_alto_mm": 34.0,
+        "husillo_tipo": "Trapezoidal T8 (8 mm/rev)",
+        "motor_tipo": "NEMA 23 (200 pasos/rev)"
+    },
     "bloquear_limites": False,
     "modo_simulacion": True,
     "puerto": PUERTO_DEFECTO,
@@ -280,6 +496,14 @@ def recalcular_metricas_laser():
     lsr.setdefault("potencia_prueba_pct", 20.0)
     lsr.setdefault("pulso_prueba_ms", int(lsr.get("duracion_pulso_ms", 250)))
     lsr.setdefault("pausa_enfriamiento_ms", 0)
+    vel_g = max(25, min(500, int(round(float(lsr.get("velocidad_grabado_hz", 180))))))
+    lsr["velocidad_grabado_hz"] = vel_g
+    lsr["retraso_paso_us"] = int(round(1000000.0 / float(vel_g)))
+    lsr["retraso_ignicion_ms"] = max(0, min(200, int(round(float(lsr.get("retraso_ignicion_ms", 25))))))
+    lsr["retraso_corte_ms"] = max(0, min(50, int(round(float(lsr.get("retraso_corte_ms", 1))))))
+    lsr["factor_esquina_min"] = round(max(0.70, min(1.00, float(lsr.get("factor_esquina_min", 0.72)))), 2)
+    lsr["radio_anti_sangrado_mm"] = round(max(0.20, min(2.50, float(lsr.get("radio_anti_sangrado_mm", 0.65)))), 2)
+    lsr["simetria_xy_verificada"] = True
     lsr["en_foco"] = bool(lsr.get("activo") and lsr.get("modo_emision") == "FOCUS")
     lsr["emision_manual_continua"] = bool(lsr.get("activo") and lsr.get("modo_emision") == "MANUAL")
     lsr["emitiendo"] = bool(lsr.get("activo"))
@@ -348,7 +572,10 @@ def inicializar_perfiles_por_defecto():
             "puerto": "COM3"
         }
     ]
-    archivos_actuales = [f for f in os.listdir(CARPETA_PERFILES) if f.endswith(".json")]
+    archivos_actuales = [
+        f for f in os.listdir(CARPETA_PERFILES)
+        if f.endswith(".json") and f not in ARCHIVOS_SISTEMA_PERFILES
+    ]
     if not archivos_actuales:
         for p in perfiles_base:
             ruta = os.path.join(CARPETA_PERFILES, f"{p['id']}.json")
@@ -357,13 +584,13 @@ def inicializar_perfiles_por_defecto():
 
 
 def listar_perfiles_guardados():
-    """Lee todos los archivos .json dentro de la carpeta 'perfiles/'."""
+    """Lee todos los archivos .json de maquina dentro de la carpeta 'perfiles/'."""
     perfiles = []
     if not os.path.exists(CARPETA_PERFILES):
         return perfiles
 
     for nombre_archivo in sorted(os.listdir(CARPETA_PERFILES)):
-        if not nombre_archivo.endswith(".json"):
+        if not nombre_archivo.endswith(".json") or nombre_archivo in ARCHIVOS_SISTEMA_PERFILES:
             continue
         ruta = os.path.join(CARPETA_PERFILES, nombre_archivo)
         try:
@@ -401,6 +628,7 @@ def construir_objeto_perfil(id_perfil, nombre_perfil, descripcion=""):
         "velocidad_hz": int(estado_maquina["velocidad_hz"]),
         "pasos_por_mm": float(estado_maquina["pasos_por_mm"]),
         "mm_por_rev": float(estado_maquina["mm_por_rev"]),
+        "estructura_fisica": dict(estado_maquina.get("estructura_fisica", {})),
         "limite_fijado": bool(estado_maquina["limite_fijado"]),
         "limite_max_x": abs(int(estado_maquina["limite_max_x"])),
         "limite_max_y": abs(int(estado_maquina["limite_max_y"])),
@@ -466,6 +694,13 @@ def aplicar_datos_perfil_a_maquina(datos):
         except (ValueError, TypeError):
             pass
 
+    if "mm_por_rev" in datos:
+        try:
+            val_mm = float(datos["mm_por_rev"])
+            if val_mm > 0:
+                estado_maquina["mm_por_rev"] = val_mm
+        except (ValueError, TypeError):
+            pass
     if "pasos_por_mm" in datos:
         try:
             val_ppm = float(datos["pasos_por_mm"])
@@ -475,6 +710,10 @@ def aplicar_datos_perfil_a_maquina(datos):
                     estado_maquina["mm_por_rev"] = round(estado_maquina["pulse_rev"] / val_ppm, 2)
         except (ValueError, TypeError):
             pass
+    if "estructura_fisica" in datos and isinstance(datos["estructura_fisica"], dict):
+        ef = estado_maquina.setdefault("estructura_fisica", {})
+        for k_ef, v_ef in datos["estructura_fisica"].items():
+            ef[k_ef] = v_ef
     elif "calibracion" in datos and isinstance(datos["calibracion"], dict):
         rel = datos["calibracion"].get("relacion_pasos_por_mm")
         if rel and float(rel) > 0:
@@ -500,10 +739,11 @@ def aplicar_datos_perfil_a_maquina(datos):
         estado_maquina["modo_herramienta"] = datos["modo_herramienta"]
     if "laser" in datos and isinstance(datos["laser"], dict):
         for k_lsr in (
-            "modo_operacion", "material_preset", "potencia_pct", "potencia_foco_pct",
-            "velocidad_grabado_hz", "velocidad_viaje_hz", "pasadas", "spot_mm",
-            "z_foco_pulsos", "usar_z_foco", "z_paso_pasada_pulsos", "duracion_pulso_ms",
-            "compensacion_diagonal", "balance_haz_xy_pct", "proteccion_esquinas", "evitar_doble_quemado"
+            "modo_operacion", "preset_material", "material_preset", "potencia_pct", "potencia_foco_pct",
+            "velocidad_grabado_hz", "velocidad_viaje_hz", "retraso_paso_us", "retraso_ignicion_ms", "retraso_corte_ms",
+            "pasadas", "spot_mm", "z_foco_pulsos", "usar_z_foco", "z_paso_pasada_pulsos", "duracion_pulso_ms",
+            "compensacion_diagonal", "balance_haz_xy_pct", "factor_esquina_min", "radio_anti_sangrado_mm",
+            "proteccion_esquinas", "evitar_doble_quemado"
         ):
             if k_lsr in datos["laser"]:
                 estado_maquina["laser"][k_lsr] = datos["laser"][k_lsr]
@@ -675,12 +915,49 @@ def recalcular_driver_desde_switches(actualizar_escala=True):
             estado_maquina["ena"]["Z"] = False
 
     if actualizar_escala and info_ms["pulse_rev"] > 0:
-        mm_rev = max(0.1, float(estado_maquina.get("mm_por_rev", 40.0)))
-        estado_maquina["pasos_por_mm"] = round(info_ms["pulse_rev"] / mm_rev, 2)
+        escala_prev = max(0.01, float(estado_maquina.get("pasos_por_mm", 50.0)))
+        mm_rev = max(0.1, float(estado_maquina.get("mm_por_rev", 8.0)))
+        escala_nueva = round(info_ms["pulse_rev"] / mm_rev, 2)
+        estado_maquina["pasos_por_mm"] = escala_nueva
+
+        # Mantener invariante el area operable fisica (en mm) cuando cambian los switches DIP S1-S3
+        if abs(escala_nueva - escala_prev) > 0.001 and estado_maquina.get("limite_fijado", False):
+            ratio_escala = escala_nueva / escala_prev
+            if estado_maquina.get("limite_max_x", 0) != 0:
+                estado_maquina["limite_max_x"] = int(round(estado_maquina["limite_max_x"] * ratio_escala))
+            if estado_maquina.get("limite_max_y", 0) != 0:
+                estado_maquina["limite_max_y"] = int(round(estado_maquina["limite_max_y"] * ratio_escala))
+            estado_maquina["pos_x"] = int(round(estado_maquina.get("pos_x", 0) * ratio_escala))
+            estado_maquina["pos_y"] = int(round(estado_maquina.get("pos_y", 0) * ratio_escala))
+            estado_maquina["motor_real_x"] = estado_maquina["pos_x"]
+            estado_maquina["motor_real_y"] = estado_maquina["pos_y"]
+
+
+def obtener_perfil_predeterminado():
+    """Lee el ID del perfil predeterminado guardado en perfiles/config_app.json."""
+    if os.path.exists(ARCHIVO_CONFIG_APP):
+        try:
+            with open(ARCHIVO_CONFIG_APP, "r", encoding="utf-8") as fh:
+                cfg = json.load(fh)
+            pid = str(cfg.get("perfil_predeterminado", "")).strip()
+            if pid:
+                return pid
+        except Exception:
+            pass
+    return "dia_17"
+
+
+def guardar_perfil_predeterminado(pid):
+    """Guarda atomicamente el perfil predeterminado de arranque en perfiles/config_app.json."""
+    tmp_path = ARCHIVO_CONFIG_APP + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as fh:
+        json.dump({"perfil_predeterminado": pid}, fh, indent=4, ensure_ascii=False)
+    os.replace(tmp_path, ARCHIVO_CONFIG_APP)
+    estado_maquina["perfil_predeterminado"] = pid
 
 
 inicializar_perfiles_por_defecto()
-recalcular_driver_desde_switches(actualizar_escala=True)
+recalcular_driver_desde_switches(actualizar_escala=False)
 
 
 def sincronizar_perfil_inicial():
@@ -688,10 +965,12 @@ def sincronizar_perfil_inicial():
     if not perfiles:
         return
     ids = [p.get("id") for p in perfiles]
-    objetivo = None
-    if estado_maquina["perfil_activo"] in ids:
-        objetivo = next((p for p in perfiles if p.get("id") == estado_maquina["perfil_activo"]), None)
-    else:
+    predet = obtener_perfil_predeterminado()
+    estado_maquina["perfil_predeterminado"] = predet if predet in ids else (
+        "dia_17" if "dia_17" in ids else perfiles[0].get("id")
+    )
+    objetivo = next((p for p in perfiles if p.get("id") == estado_maquina["perfil_predeterminado"]), None)
+    if not objetivo:
         objetivo = perfiles[0]
     if objetivo:
         aplicar_datos_perfil_a_maquina(objetivo)
@@ -832,49 +1111,77 @@ def _verificar_soporte_b2d_bloqueado():
     return True
 
 
-def enviar_interpolacion_xy_serial(pasos_x, dir_x, pasos_y, dir_y, duracion_esperada, pwm_laser=None, vel_hz=None):
+def enviar_interpolacion_xy_serial(
+    pasos_x, dir_x, pasos_y, dir_y, duracion_esperada,
+    pwm_laser=None, vel_hz=None,
+    pre_ignicion=False, corte_trazo=False,
+    retraso_ignicion_ms=None, retraso_corte_ms=None
+):
     """
-    Mueve los ejes X e Y de forma simultánea (Interpolación Lineal 2D Bresenham):
+    Mueve los ejes X e Y de forma simultanea (Interpolacion Lineal 2D Bresenham simetrica):
     - Si pwm_laser > 0 (Modo Laser 5W activo), usa 'M2L,pasosX,dirX,pasosY,dirY,pwm,delayUs'
-      para encender/modular el laser de 5W en sincronía exacta con cada paso del motor y apagarlo
-      al concluir el segmento, garantizando tiempo térmico suficiente para quemado continuo sin puntos.
-    - Si no hay laser activo (viaje en vacío 0W o Modo Dibujo), usa la misma rutina de movimiento de dibujo.
+      aplicando compensacion diagonal euclidiana, balance anisotropico X/Y sobre la velocidad
+      efectiva y retardos de pre-ignicion / corte (dwell) para evitar zonas muertas en curvas.
+    - Si pwm_laser == 0 en Modo Laser (viaje en vacio 0W), usa 'M2L,...,0,delayViajeUs' para
+      asegurar simetria estricta de Hz/delay entre X e Y a velocidad_viaje_hz con 0 W.
+    - En Modo Dibujo (pluma), mantiene exactamente la cinematica y comandos estandar de dibujo.
     """
     global puerto_serial
     if pasos_x <= 0 and pasos_y <= 0:
         return True, "Sin desplazamiento"
 
     usar_modo_laser = (pwm_laser is not None) and (int(pwm_laser) > 0)
+    usar_viaje_laser_simetrico = (
+        (not usar_modo_laser)
+        and (estado_maquina.get("modo_herramienta") == "laser")
+    )
     pwm_seg = max(0, min(255, int(pwm_laser))) if (pwm_laser is not None) else 0
+    lsr = estado_maquina.get("laser", {})
+    ign_ms = 0
+    corte_ms = 0
 
     if usar_modo_laser:
-        lsr = estado_maquina.get("laser", {})
         hz_base = int(vel_hz or lsr.get("velocidad_grabado_hz", 180))
         if hz_base >= 600:
             hz_base = 180
         hz_activo = max(25, min(500, hz_base))
+        retraso_paso_us = 1000000.0 / float(hz_activo)
 
         # Compensacion diagonal euclidiana: mantiene la velocidad lineal mm/s constante en todo angulo
-        # (sin esto, las diagonales a 45 deg avanzan 41.4% mas rapido y queman mas delgado que H/V).
+        # dt_paso = retraso_paso_us * sqrt(dX^2 + dY^2) / max(|dX|, |dY|)
         pasos_dom = max(pasos_x, pasos_y)
         dist_euc = math.hypot(pasos_x, pasos_y)
         k_diag = (dist_euc / float(pasos_dom)) if (pasos_dom > 0 and lsr.get("compensacion_diagonal", True)) else 1.0
-        delay_us = int(round((500000.0 / float(hz_activo)) * k_diag))
-        delay_us = max(1000, min(20000, delay_us))
 
-        # Balance anisotropico de haz X/Y (diodo 450nm con emisor rectangular):
-        # bal_pct > 0 atenua movimientos en Y; bal_pct < 0 atenua movimientos en X.
+        # Balance de anisotropia optica (Spot Balance) aplicado sobre la velocidad efectiva
+        # en trazos puramente horizontales vs. verticales para igualar el grosor del haz eliptico.
         bal_pct = max(-35.0, min(35.0, float(lsr.get("balance_haz_xy_pct", 0.0))))
+        k_aniso = 1.0
         if abs(bal_pct) > 0.1 and dist_euc > 0:
             cos2 = (pasos_x * pasos_x) / (dist_euc * dist_euc)
             sin2 = (pasos_y * pasos_y) / (dist_euc * dist_euc)
-            factor_haz = (1.0 - (bal_pct / 100.0) * sin2) if bal_pct > 0 else (1.0 - (abs(bal_pct) / 100.0) * cos2)
-            pwm_seg = max(1, min(255, int(round(pwm_seg * factor_haz))))
+            k_aniso = (1.0 - (bal_pct / 100.0) * sin2) if bal_pct > 0 else (1.0 - (abs(bal_pct) / 100.0) * cos2)
+
+        dt_paso_us = retraso_paso_us * k_diag * k_aniso
+        # En el ESP32 cada paso ejecuta delayMicroseconds(delayUs) en HIGH y en LOW (periodo = 2 * delayUs)
+        delay_us = int(round(dt_paso_us * 0.5))
+        delay_us = max(1000, min(20000, delay_us))
+
+        if pre_ignicion:
+            ign_raw = lsr.get("retraso_ignicion_ms", 25) if retraso_ignicion_ms is None else retraso_ignicion_ms
+            ign_ms = max(0, min(200, int(round(float(ign_raw)))))
+        if corte_trazo:
+            corte_raw = lsr.get("retraso_corte_ms", 1) if retraso_corte_ms is None else retraso_corte_ms
+            corte_ms = max(0, min(50, int(round(float(corte_raw)))))
+    elif usar_viaje_laser_simetrico:
+        hz_viaje = int(vel_hz or lsr.get("velocidad_viaje_hz", 500))
+        hz_activo = max(100, min(1500, hz_viaje))
+        delay_us = max(333, min(10000, int(round(500000.0 / float(hz_activo)))))
     else:
         hz_activo = max(50, min(4000, int(vel_hz or estado_maquina.get("velocidad_hz", 500))))
         delay_us = max(125, min(10000, int(500000 // hz_activo)))
 
-    if not usar_modo_laser:
+    if (not usar_modo_laser) and (not usar_viaje_laser_simetrico):
         if pasos_y <= 0:
             return enviar_por_serial("X", pasos_x, dir_x, duracion_esperada)
         if pasos_x <= 0:
@@ -895,18 +1202,32 @@ def enviar_interpolacion_xy_serial(pasos_x, dir_x, pasos_y, dir_y, duracion_espe
 
     if estado_maquina["modo_simulacion"]:
         if usar_modo_laser:
-            return True, f"Simulado 2D + Laser 5W Sincronizado (PWM={pwm_seg}/255, Delay={delay_us}us, Swap={swapped})"
-        return True, f"Simulado 2D Simultáneo (DIR_X={dir_fis_x}, DIR_Y={dir_fis_y}, Swap={swapped})"
+            return True, f"Simulado 2D + Laser 5W Sincronizado (PWM={pwm_seg}/255, Delay={delay_us}us, PreIgn={ign_ms}ms, Swap={swapped})"
+        if usar_viaje_laser_simetrico:
+            return True, f"Simulado Viaje 0W Simetrico X/Y (Hz={hz_activo}, Delay={delay_us}us, Swap={swapped})"
+        return True, f"Simulado 2D Simultaneo (DIR_X={dir_fis_x}, DIR_Y={dir_fis_y}, Swap={swapped})"
 
     if not puerto_serial or not puerto_serial.is_open:
-        return False, f"Error: El puerto {estado_maquina['puerto']} no está conectado. Activa Simulación o conecta el hardware."
+        return False, f"Error: El puerto {estado_maquina['puerto']} no esta conectado. Activa Simulacion o conecta el hardware."
 
     with serial_lock:
         try:
             duracion_real_seg = (max(px_fis, py_fis) * 2.0 * delay_us) / 1000000.0
             timeout_max = max(6.0, duracion_esperada * 12, duracion_real_seg * 4.0 + 5.0)
             if usar_modo_laser:
+                # Pre-ignicion (dwell) para superar la zona muerta optica/termica al iniciar un trazo
+                if ign_ms > 0:
+                    puerto_serial.reset_input_buffer()
+                    puerto_serial.write(f"LASER,PWR,{pwm_seg}\n".encode("utf-8"))
+                    ok_pre, resp_pre = _esperar_ok_serial_bloqueado(3.0)
+                    if not ok_pre:
+                        puerto_serial.write(b"LASER,OFF\n")
+                        estado_maquina["posicion_sincronizada"] = False
+                        return False, resp_pre
+                    time.sleep(ign_ms / 1000.0)
                 comando = f"M2L,{px_fis},{dir_fis_x},{py_fis},{dir_fis_y},{pwm_seg},{delay_us}\n"
+            elif usar_viaje_laser_simetrico:
+                comando = f"M2L,{px_fis},{dir_fis_x},{py_fis},{dir_fis_y},0,{delay_us}\n"
             else:
                 comando = f"M2,{px_fis},{dir_fis_x},{py_fis},{dir_fis_y}\n"
             puerto_serial.reset_input_buffer()
@@ -914,13 +1235,15 @@ def enviar_interpolacion_xy_serial(pasos_x, dir_x, pasos_y, dir_y, duracion_espe
             ok, resp = _esperar_ok_serial_bloqueado(timeout_max)
             if not ok:
                 estado_maquina["posicion_sincronizada"] = False
+            elif usar_modo_laser and corte_ms > 0:
+                time.sleep(corte_ms / 1000.0)
             return ok, resp
         except Exception as e:
             estado_maquina["conectado"] = False
             estado_maquina["modo_simulacion"] = True
             estado_maquina["posicion_sincronizada"] = False
-            estado_maquina["error_puerto"] = f"Pérdida de conexión en {estado_maquina['puerto']}: {e}"
-            return False, f"Fallo de comunicación serial 2D: {e}"
+            estado_maquina["error_puerto"] = f"Perdida de conexion en {estado_maquina['puerto']}: {e}"
+            return False, f"Fallo de comunicacion serial 2D: {e}"
 
 
 def construir_respuesta_estado(**extra):
@@ -1010,6 +1333,35 @@ def api_profiles_load():
         return jsonify(construir_respuesta_estado(ok=True))
     except Exception as e:
         return jsonify(construir_respuesta_estado(ok=False, error=f"Error al cargar el perfil: {e}")), 500
+
+
+@app.route("/api/profiles/set_default", methods=["POST"])
+def api_profiles_set_default():
+    data = request.get_json(silent=True) or {}
+    pid = limpiar_slug_perfil(data.get("id") or estado_maquina.get("perfil_activo") or "")
+    ruta = os.path.join(CARPETA_PERFILES, f"{pid}.json")
+    if not pid or not os.path.exists(ruta):
+        return jsonify(construir_respuesta_estado(
+            ok=False,
+            error=f"No se encontro el perfil '{pid}' para fijarlo como predeterminado."
+        )), 404
+    try:
+        guardar_perfil_predeterminado(pid)
+        nombre = pid
+        try:
+            with open(ruta, "r", encoding="utf-8") as fh:
+                nombre = json.load(fh).get("nombre", pid)
+        except Exception:
+            pass
+        estado_maquina["ultimo_mensaje"] = (
+            f"Perfil '{nombre}' fijado como predeterminado. Se cargara automaticamente cada vez que inicie la aplicacion."
+        )
+        return jsonify(construir_respuesta_estado(ok=True, perfil_predeterminado=pid))
+    except Exception as e:
+        return jsonify(construir_respuesta_estado(
+            ok=False,
+            error=f"No se pudo guardar el perfil predeterminado: {e}"
+        )), 500
 
 
 @app.route("/api/profiles/save", methods=["POST"])
@@ -1683,9 +2035,16 @@ def api_move_xy():
         duracion_seg = round(pasos_dominantes / float(vel_hz), 3)
     duracion_anim_ms = int(max(40, min(25000, duracion_seg * 1000)))
 
+    pre_ign = bool(data.get("pre_ignicion", False))
+    corte_tr = bool(data.get("corte_trazo", False))
+    ign_ms = data.get("retraso_ignicion_ms", None)
+    corte_ms = data.get("retraso_corte_ms", None)
+
     exito_serial, msg_serial = enviar_interpolacion_xy_serial(
         pasos_x, dir_x, pasos_y, dir_y, duracion_seg,
-        pwm_laser=pwm_laser, vel_hz=vel_hz
+        pwm_laser=pwm_laser, vel_hz=vel_hz,
+        pre_ignicion=pre_ign, corte_trazo=corte_tr,
+        retraso_ignicion_ms=ign_ms, retraso_corte_ms=corte_ms
     )
     if not exito_serial:
         lsr["activo"] = False
@@ -2371,19 +2730,32 @@ def api_laser():
         clave = str(data.get("preset", "")).strip()
         if clave not in PRESETS_LASER_5W:
             return jsonify(construir_respuesta_estado(ok=False, error="Preset de material no encontrado.")), 400
-        pr = PRESETS_LASER_5W[clave]
+        pr = normalizar_preset_material(clave, PRESETS_LASER_5W[clave])
+        PRESETS_LASER_5W[clave] = pr
+        pn = pr["parametros_nucleares"]
+        pg = pr["parametros_geometricos_derivados"]
         lsr["preset_material"] = clave
         lsr["material_preset"] = clave
         lsr["modo_operacion"] = pr["modo_operacion"]
-        lsr["potencia_pct"] = pr["potencia_pct"]
-        lsr["velocidad_grabado_hz"] = pr["velocidad_grabado_hz"]
-        lsr["velocidad_viaje_hz"] = pr["velocidad_viaje_hz"]
-        lsr["pasadas"] = pr["pasadas"]
-        lsr["spot_mm"] = pr["spot_mm"]
+        lsr["potencia_pct"] = pn["potencia_pct"]
+        lsr["velocidad_grabado_hz"] = pn["velocidad_grabado_hz"]
+        lsr["velocidad_viaje_hz"] = pn["velocidad_viaje_hz"]
+        lsr["retraso_paso_us"] = pn["retraso_paso_us"]
+        lsr["retraso_ignicion_ms"] = pn["retraso_ignicion_ms"]
+        lsr["retraso_corte_ms"] = pn["retraso_corte_ms"]
+        lsr["pasadas"] = pg["pasadas"]
+        lsr["spot_mm"] = pg["spot_kerf_mm"]
+        lsr["balance_haz_xy_pct"] = pg["balance_anisotropia_xy_pct"]
+        lsr["factor_esquina_min"] = pg["factor_esquina_min"]
+        lsr["radio_anti_sangrado_mm"] = pg["radio_anti_sangrado_mm"]
+        if pg.get("z_offset_foco_pulsos", 0) != 0:
+            lsr["z_foco_pulsos"] = pg["z_offset_foco_pulsos"]
+        lsr["z_paso_pasada_pulsos"] = pg["z_paso_por_pasada_pulsos"]
         recalcular_metricas_laser()
         estado_maquina["ultimo_mensaje"] = (
             f"Preset Laser 5W aplicado: {pr['nombre']} -> {lsr['potencia_pct']}% ({lsr['potencia_watts']:.2f}W), "
-            f"Grabado {lsr['velocidad_grabado_hz']} Hz, Viaje {lsr['velocidad_viaje_hz']} Hz, {lsr['pasadas']} pasada(s)."
+            f"Grabado {lsr['velocidad_grabado_hz']} Hz ({lsr['retraso_paso_us']} us), "
+            f"Viaje {lsr['velocidad_viaje_hz']} Hz, Pre-ignicion {lsr['retraso_ignicion_ms']} ms, {lsr['pasadas']} pasada(s)."
         )
         return jsonify(construir_respuesta_estado(ok=True))
 
@@ -2466,6 +2838,26 @@ def api_laser():
         lsr["proteccion_esquinas"] = bool(data["proteccion_esquinas"])
     if "evitar_doble_quemado" in data:
         lsr["evitar_doble_quemado"] = bool(data["evitar_doble_quemado"])
+    if "retraso_ignicion_ms" in data:
+        try:
+            lsr["retraso_ignicion_ms"] = max(0, min(200, int(round(float(data["retraso_ignicion_ms"])))))
+        except (ValueError, TypeError):
+            pass
+    if "retraso_corte_ms" in data:
+        try:
+            lsr["retraso_corte_ms"] = max(0, min(50, int(round(float(data["retraso_corte_ms"])))))
+        except (ValueError, TypeError):
+            pass
+    if "factor_esquina_min" in data:
+        try:
+            lsr["factor_esquina_min"] = max(0.70, min(1.00, round(float(data["factor_esquina_min"]), 2)))
+        except (ValueError, TypeError):
+            pass
+    if "radio_anti_sangrado_mm" in data:
+        try:
+            lsr["radio_anti_sangrado_mm"] = max(0.20, min(2.50, round(float(data["radio_anti_sangrado_mm"]), 2)))
+        except (ValueError, TypeError):
+            pass
 
     recalcular_metricas_laser()
     estado_maquina["ultimo_mensaje"] = (
@@ -2473,6 +2865,391 @@ def api_laser():
         f"Vel. Grabado {lsr['velocidad_grabado_hz']} Hz, Viaje {lsr['velocidad_viaje_hz']} Hz, {lsr['pasadas']} pasada(s)."
     )
     return jsonify(construir_respuesta_estado(ok=True))
+
+
+def _apagar_laser_seguro_interno():
+    """Garantiza corte inmediato a 0 W en hardware y en estado interno."""
+    lsr = estado_maquina["laser"]
+    lsr["activo"] = False
+    lsr["emitiendo"] = False
+    lsr["en_foco"] = False
+    lsr["modo_emision"] = "OFF"
+    lsr["pwm_actual"] = 0
+    lsr["watts_actuales"] = 0.0
+    if not estado_maquina["modo_simulacion"]:
+        enviar_comando_raw_serial("LASER,OFF")
+
+
+def _mover_a_mm_calibracion(dest_x_mm, dest_y_mm, pwm_laser=0, vel_hz=None,
+                            pre_ignicion=False, corte_trazo=False,
+                            retraso_ignicion_ms=None, retraso_corte_ms=None):
+    """
+    Ejecuta un desplazamiento lineal absoluto (en mm) durante la calibracion usando
+    la misma cinematica Bresenham y protocolo M2L que el resto de la aplicacion.
+    """
+    escala = max(0.01, float(estado_maquina.get("pasos_por_mm", 50.0)))
+    dest_x = int(round(float(dest_x_mm) * escala))
+    dest_y = int(round(float(dest_y_mm) * escala))
+    prev_x = int(estado_maquina["pos_x"])
+    prev_y = int(estado_maquina["pos_y"])
+
+    dx = dest_x - prev_x
+    dy = dest_y - prev_y
+    if dx == 0 and dy == 0:
+        return True, "Sin desplazamiento"
+
+    pasos_x = abs(dx)
+    pasos_y = abs(dy)
+    dir_x = 1 if dx > 0 else 0
+    dir_y = 1 if dy > 0 else 0
+
+    lsr = estado_maquina["laser"]
+    if vel_hz is None:
+        vel_hz = int(lsr["velocidad_grabado_hz"] if pwm_laser > 0 else lsr["velocidad_viaje_hz"])
+
+    dist_euc = math.hypot(pasos_x, pasos_y)
+    dur_seg = round(dist_euc / max(1.0, float(vel_hz)), 3)
+
+    ok, msg = enviar_interpolacion_xy_serial(
+        pasos_x, dir_x, pasos_y, dir_y, dur_seg,
+        pwm_laser=(pwm_laser if pwm_laser > 0 else None),
+        vel_hz=vel_hz,
+        pre_ignicion=pre_ignicion,
+        corte_trazo=corte_trazo,
+        retraso_ignicion_ms=retraso_ignicion_ms,
+        retraso_corte_ms=retraso_corte_ms
+    )
+    if not ok:
+        _apagar_laser_seguro_interno()
+        return False, msg
+
+    estado_maquina["pos_x"] = dest_x
+    estado_maquina["pos_y"] = dest_y
+    estado_maquina["motor_real_x"] = dest_x
+    estado_maquina["motor_real_y"] = dest_y
+    if not estado_maquina["historial"] or estado_maquina["historial"][-1] != [dest_x, dest_y]:
+        estado_maquina["historial"].append([dest_x, dest_y])
+    return True, msg
+
+
+@app.route("/api/laser/calibracion/estado", methods=["GET"])
+def api_laser_calibracion_estado():
+    escala = max(0.01, float(estado_maquina.get("pasos_por_mm", 50.0)))
+    with calibracion_lock:
+        snap = dict(calibracion_laser_estado)
+    snap["pos_x"] = int(estado_maquina.get("pos_x", 0))
+    snap["pos_y"] = int(estado_maquina.get("pos_y", 0))
+    snap["pos_x_mm"] = round(snap["pos_x"] / escala, 2)
+    snap["pos_y_mm"] = round(snap["pos_y"] / escala, 2)
+    snap["pasos_por_mm"] = escala
+    return jsonify({"ok": True, "calibracion": snap})
+
+
+@app.route("/api/laser/calibracion/abortar", methods=["POST"])
+def api_laser_calibracion_abortar():
+    with calibracion_lock:
+        calibracion_laser_estado["abortar"] = True
+        calibracion_laser_estado["abortado"] = True
+    _apagar_laser_seguro_interno()
+    estado_maquina["ultimo_mensaje"] = "Calibracion laser abortada por emergencia. Laser apagado a 0.00 W."
+    return jsonify(construir_respuesta_estado(ok=True, abortado=True))
+
+
+@app.route("/api/laser/calibracion/ejecutar_matriz", methods=["POST"])
+def api_laser_calibracion_ejecutar_matriz():
+    """
+    Genera y ejecuta la Hoja de Calibracion Compacta 4x4 (16 cuadrantes, <= 40x40 mm)
+    para el material activo utilizando cinematica Bresenham y protocolo M2L con corte
+    a 0 W en todos los saltos entre cuadrantes y sub-trazos.
+    """
+    data = request.get_json(silent=True) or {}
+    lsr = estado_maquina["laser"]
+    id_material = str(data.get("id_material") or lsr.get("preset_material") or "madera_grabado_fino").strip()
+
+    if id_material not in PRESETS_LASER_5W:
+        return jsonify(construir_respuesta_estado(
+            ok=False,
+            error=f"Material '{id_material}' no encontrado en PRESETS_LASER_5W."
+        )), 400
+
+    if not estado_maquina["modo_simulacion"] and not lsr.get("armado", False):
+        return jsonify(construir_respuesta_estado(
+            ok=False,
+            error="Seguridad Laser 5W: Debes ARMAR el modulo laser antes de iniciar la prueba de calibracion."
+        )), 400
+
+    escala = max(0.01, float(estado_maquina.get("pasos_por_mm", 50.0)))
+    origen_x_mm = float(data["origen_x"]) if data.get("origen_x") is not None else round(estado_maquina["pos_x"] / escala, 3)
+    origen_y_mm = float(data["origen_y"]) if data.get("origen_y") is not None else round(estado_maquina["pos_y"] / escala, 3)
+    try:
+        tamano_plano_mm = max(20.0, min(250.0, float(data.get("tamano_plano_mm", 40.0))))
+    except (ValueError, TypeError):
+        tamano_plano_mm = 40.0
+
+    matriz = generar_matriz_calibracion_4x4(
+        PRESETS_LASER_5W[id_material], origen_x_mm, origen_y_mm, tamano_plano_mm=tamano_plano_mm
+    )
+    area = matriz["area_mm"]
+
+    # Verificar limites suaves de la mesa si el enclave de limites esta activo
+    if estado_maquina.get("bloquear_limites", True) and estado_maquina.get("limite_fijado", True):
+        max_x_mm = abs(int(estado_maquina["limite_max_x"])) / escala
+        max_y_mm = abs(int(estado_maquina["limite_max_y"])) / escala
+        if origen_x_mm < 0 or origen_y_mm < 0 or (origen_x_mm + area["ancho"]) > (max_x_mm + 0.5) or (origen_y_mm + area["alto"]) > (max_y_mm + 0.5):
+            return jsonify(construir_respuesta_estado(
+                ok=False,
+                error=(
+                    f"La matriz 4x4 ({area['ancho']}x{area['alto']} mm) desde ({origen_x_mm:.1f}, {origen_y_mm:.1f}) mm "
+                    f"excede los limites calibrados de la mesa ({max_x_mm:.1f}x{max_y_mm:.1f} mm). "
+                    "Mueve el cabezal a una posicion con espacio suficiente."
+                )
+            )), 400
+
+    with calibracion_lock:
+        if calibracion_laser_estado["ejecutando"]:
+            return jsonify(construir_respuesta_estado(
+                ok=False,
+                error="Ya existe una rutina de calibracion en ejecucion."
+            )), 409
+        calibracion_laser_estado.update({
+            "ejecutando": True,
+            "abortar": False,
+            "abortado": False,
+            "id_material": id_material,
+            "nombre_material": matriz["nombre_material"],
+            "celda_actual": 0,
+            "total_celdas": len(matriz["celdas"]),
+            "progreso_pct": 0.0,
+            "tabla_celdas": matriz["tabla_celdas"],
+            "area_mm": area,
+            "error": None
+        })
+
+    modo_previo = estado_maquina.get("modo_herramienta", "laser")
+    estado_maquina["modo_herramienta"] = "laser"
+    abortado = False
+    error_ejec = None
+
+    try:
+        for idx, celda in enumerate(matriz["celdas"]):
+            with calibracion_lock:
+                if calibracion_laser_estado["abortar"]:
+                    abortado = True
+                    break
+                calibracion_laser_estado["celda_actual"] = celda["celda"]
+                calibracion_laser_estado["progreso_pct"] = round((idx / float(len(matriz["celdas"]))) * 100.0, 1)
+
+            pwm_celda = int(celda["potencia_pwm"])
+            vel_grab = int(celda["velocidad_grabado_hz"])
+            vel_viaje = int(celda["velocidad_viaje_hz"])
+            ign_ms = int(celda["retraso_ignicion_ms"])
+            corte_ms = int(celda["retraso_corte_ms"])
+
+            for trazo in celda["trazos"]:
+                with calibracion_lock:
+                    if calibracion_laser_estado["abortar"]:
+                        abortado = True
+                        break
+                pts = trazo["puntos"]
+                if not pts or len(pts) < 2:
+                    continue
+
+                # Aproximacion previa en 0 W si el trazo la define (aceleracion previa)
+                pre_ap = trazo.get("pre_aprox")
+                if pre_ap:
+                    ok_ap, msg_ap = _mover_a_mm_calibracion(pre_ap[0], pre_ap[1], pwm_laser=0, vel_hz=vel_viaje)
+                    if not ok_ap:
+                        error_ejec = msg_ap
+                        break
+
+                # Viaje en vacio 0 W al inicio del trazo
+                ok_ini, msg_ini = _mover_a_mm_calibracion(pts[0][0], pts[0][1], pwm_laser=0, vel_hz=vel_viaje)
+                if not ok_ini:
+                    error_ejec = msg_ini
+                    break
+
+                # Quemado sincronizado M2L segmento a segmento
+                for j in range(1, len(pts)):
+                    with calibracion_lock:
+                        if calibracion_laser_estado["abortar"]:
+                            abortado = True
+                            break
+                    ok_seg, msg_seg = _mover_a_mm_calibracion(
+                        pts[j][0], pts[j][1],
+                        pwm_laser=pwm_celda,
+                        vel_hz=vel_grab,
+                        pre_ignicion=(j == 1),
+                        corte_trazo=(j == len(pts) - 1),
+                        retraso_ignicion_ms=ign_ms,
+                        retraso_corte_ms=corte_ms
+                    )
+                    if not ok_seg:
+                        error_ejec = msg_seg
+                        break
+
+                if abortado or error_ejec:
+                    break
+            if abortado or error_ejec:
+                break
+
+        # Regresar al origen de la matriz con laser apagado 0 W si termino normalmente
+        if not abortado and not error_ejec:
+            _mover_a_mm_calibracion(origen_x_mm, origen_y_mm, pwm_laser=0, vel_hz=int(lsr.get("velocidad_viaje_hz", 500)))
+    finally:
+        _apagar_laser_seguro_interno()
+        estado_maquina["modo_herramienta"] = modo_previo
+        with calibracion_lock:
+            calibracion_laser_estado["ejecutando"] = False
+            calibracion_laser_estado["abortado"] = abortado
+            calibracion_laser_estado["error"] = error_ejec
+            if not abortado and not error_ejec:
+                calibracion_laser_estado["progreso_pct"] = 100.0
+
+    if error_ejec:
+        estado_maquina["ultimo_mensaje"] = f"Error durante calibracion 4x4: {error_ejec}"
+        return jsonify(construir_respuesta_estado(
+            ok=False,
+            error=error_ejec,
+            id_material=id_material,
+            tabla_celdas=matriz["tabla_celdas"],
+            area_mm=area,
+            abortado=abortado
+        )), 500
+
+    if abortado:
+        estado_maquina["ultimo_mensaje"] = "Matriz de calibracion 4x4 abortada por seguridad. Laser en 0.00 W."
+    else:
+        estado_maquina["ultimo_mensaje"] = (
+            f"Matriz de calibracion 4x4 completada para '{matriz['nombre_material']}' "
+            f"({area['ancho']}x{area['alto']} mm). Selecciona la celda con mejor trazo."
+        )
+
+    return jsonify(construir_respuesta_estado(
+        ok=True,
+        id_material=id_material,
+        nombre_material=matriz["nombre_material"],
+        tabla_celdas=matriz["tabla_celdas"],
+        area_mm=area,
+        abortado=abortado
+    ))
+
+
+@app.route("/api/laser/calibracion/guardar_resultado", methods=["POST"])
+def api_laser_calibracion_guardar_resultado():
+    """
+    Aplica la celda seleccionada (1..16) de la matriz 4x4 al perfil del material,
+    recalcula retraso_paso_us, persiste atomicamente en perfiles/materiales_laser.json
+    y en el perfil de maquina activo, y opcionalmente reescala proporcionalmente el
+    resto de perfiles con el factor de densidad energetica K_cal.
+    """
+    data = request.get_json(silent=True) or {}
+    lsr = estado_maquina["laser"]
+    id_material = str(data.get("id_material") or calibracion_laser_estado.get("id_material") or lsr.get("preset_material") or "").strip()
+
+    if id_material not in PRESETS_LASER_5W:
+        return jsonify(construir_respuesta_estado(ok=False, error="Material de calibracion no valido.")), 400
+
+    try:
+        celda_sel = int(data.get("celda_seleccionada", 0))
+    except (ValueError, TypeError):
+        celda_sel = 0
+
+    if not (1 <= celda_sel <= 16):
+        return jsonify(construir_respuesta_estado(ok=False, error="Debes seleccionar una celda valida entre 1 y 16.")), 400
+
+    aplicar_global = bool(data.get("aplicar_factor_global", False))
+
+    # Obtener tabla de celdas usada en la ultima ejecucion (o regenerar deterministamente)
+    with calibracion_lock:
+        tabla_celdas = list(calibracion_laser_estado.get("tabla_celdas") or [])
+        mat_ult = calibracion_laser_estado.get("id_material")
+    if not tabla_celdas or mat_ult != id_material:
+        tabla_celdas = generar_matriz_calibracion_4x4(PRESETS_LASER_5W[id_material], 0.0, 0.0)["tabla_celdas"]
+
+    info_celda = next((c for c in tabla_celdas if int(c["celda"]) == celda_sel), None)
+    if not info_celda:
+        return jsonify(construir_respuesta_estado(ok=False, error=f"Celda {celda_sel} no encontrada en la matriz.")), 400
+
+    pr_prev = normalizar_preset_material(id_material, PRESETS_LASER_5W[id_material])
+    p_anterior = float(pr_prev["parametros_nucleares"]["potencia_pct"])
+    v_anterior = float(pr_prev["parametros_nucleares"]["velocidad_grabado_hz"])
+
+    p_nueva = float(info_celda["potencia_pct"])
+    v_nueva = max(VEL_MIN_SEGURA_HZ, min(VEL_MAX_SEGURA_HZ, int(info_celda["velocidad_grabado_hz"])))
+    retraso_paso_nuevo = int(round(1000000.0 / float(v_nueva)))
+
+    # Actualizar perfil del material seleccionado
+    pr_prev["parametros_nucleares"]["potencia_pct"] = p_nueva
+    pr_prev["parametros_nucleares"]["velocidad_grabado_hz"] = v_nueva
+    pr_prev["parametros_nucleares"]["retraso_paso_us"] = retraso_paso_nuevo
+    PRESETS_LASER_5W[id_material] = normalizar_preset_material(id_material, pr_prev)
+
+    # Aplicar factor de correccion global K_cal al resto de perfiles si se solicito
+    k_cal = 1.0
+    ajustes_globales = []
+    if aplicar_global:
+        k_cal, ajustes_globales = aplicar_factor_global_materiales(
+            PRESETS_LASER_5W, id_material, p_anterior, v_anterior, p_nueva, v_nueva
+        )
+
+    # Sincronizar estado activo del laser en memoria
+    pr_act = PRESETS_LASER_5W[id_material]
+    pn_act = pr_act["parametros_nucleares"]
+    pg_act = pr_act["parametros_geometricos_derivados"]
+    lsr["preset_material"] = id_material
+    lsr["material_preset"] = id_material
+    lsr["potencia_pct"] = pn_act["potencia_pct"]
+    lsr["velocidad_grabado_hz"] = pn_act["velocidad_grabado_hz"]
+    lsr["velocidad_viaje_hz"] = pn_act["velocidad_viaje_hz"]
+    lsr["retraso_paso_us"] = pn_act["retraso_paso_us"]
+    lsr["retraso_ignicion_ms"] = pn_act["retraso_ignicion_ms"]
+    lsr["retraso_corte_ms"] = pn_act["retraso_corte_ms"]
+    lsr["spot_mm"] = pg_act["spot_kerf_mm"]
+    lsr["balance_haz_xy_pct"] = pg_act["balance_anisotropia_xy_pct"]
+    lsr["factor_esquina_min"] = pg_act["factor_esquina_min"]
+    lsr["radio_anti_sangrado_mm"] = pg_act["radio_anti_sangrado_mm"]
+    lsr["pasadas"] = pg_act["pasadas"]
+    recalcular_metricas_laser()
+
+    # Persistencia atomica en perfiles/materiales_laser.json y actualizacion NO destructiva
+    # de solo la seccion "laser" en el perfil de maquina activo (sin alterar sus limites ni pasos)
+    try:
+        guardar_materiales_laser_archivo()
+        pid_activo = estado_maquina.get("perfil_activo")
+        if pid_activo:
+            ruta_perf = os.path.join(CARPETA_PERFILES, f"{pid_activo}.json")
+            if os.path.exists(ruta_perf):
+                with open(ruta_perf, "r", encoding="utf-8") as fh:
+                    perfil_obj = json.load(fh)
+                perfil_obj["fecha_modificacion"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                perfil_obj["laser"] = {
+                    k: v for k, v in estado_maquina.get("laser", {}).items()
+                    if k not in ("armado", "activo", "modo_emision")
+                }
+                tmp_perf = ruta_perf + ".tmp"
+                with open(tmp_perf, "w", encoding="utf-8") as fh:
+                    json.dump(perfil_obj, fh, indent=4, ensure_ascii=False)
+                os.replace(tmp_perf, ruta_perf)
+    except Exception as e:
+        return jsonify(construir_respuesta_estado(
+            ok=False,
+            error=f"Parametros aplicados en memoria, pero fallo al persistir en perfiles/: {e}"
+        )), 500
+
+    msg_global = f" | Autoajuste global aplicado (K_cal={k_cal:.2f}) a {len(ajustes_globales)} perfiles." if aplicar_global else ""
+    estado_maquina["ultimo_mensaje"] = (
+        f"Material '{pr_act['nombre']}' calibrado con Celda #{celda_sel}: "
+        f"Potencia {p_nueva}%, Grabado {v_nueva} Hz (Delay {retraso_paso_nuevo} us){msg_global}"
+    )
+
+    return jsonify(construir_respuesta_estado(
+        ok=True,
+        id_material=id_material,
+        celda_seleccionada=celda_sel,
+        k_cal=k_cal,
+        ajustes_globales=ajustes_globales,
+        perfil_material=pr_act
+    ))
 
 
 @app.route("/api/process_image", methods=["POST"])

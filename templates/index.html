@@ -1678,17 +1678,19 @@
                                 <div class="param-group">
                                     <label for="select-laser-preset">Material (Diodo 5W)</label>
                                     <select id="select-laser-preset" class="select-input" onchange="aplicarPresetMaterialLaser(this.value)">
-                                        <option value="papel_marcado">Papel / Cartulina (35% | 1.75 W)</option>
-                                        <option value="carton_grabado">Carton Grabado (55% | 2.75 W)</option>
-                                        <option value="carton_corte">Carton Corte (90% | 4.50 W | 2p)</option>
-                                        <option value="madera_grabado_fino" selected>Madera Balsa Fino (65% | 3.25 W)</option>
-                                        <option value="madera_grabado_profundo">Madera / MDF Profundo (85% | 4.25 W)</option>
-                                        <option value="madera_fotograbado">Fotograbado Dithering (70% | 3.50 W)</option>
-                                        <option value="madera_corte_balsa_3mm">Corte Madera 2-3 mm (100% | 5.00 W | 3p)</option>
-                                        <option value="cuero_grabado">Cuero Natural (50% | 2.50 W)</option>
-                                        <option value="acrilico_oscuro_grabado">Acrilico Oscuro (75% | 3.75 W)</option>
+                                        <option value="papel_marcado">Papel / Cartulina (60% | 140 Hz)</option>
+                                        <option value="papel_cascaron_300g">Papel Cascaron 300 g/m2 (82% | 115 Hz)</option>
+                                        <option value="carton_grabado">Carton Grabado (75% | 125 Hz)</option>
+                                        <option value="carton_corte">Carton / Cascaron Corte (88% | 85 Hz | 4p)</option>
+                                        <option value="madera_grabado_fino" selected>Madera Balsa Fino (78% | 120 Hz)</option>
+                                        <option value="madera_grabado_profundo">Madera / MDF Profundo (85% | 100 Hz)</option>
+                                        <option value="madera_fotograbado">Fotograbado Dithering (76% | 125 Hz)</option>
+                                        <option value="madera_corte_balsa_3mm">Corte Madera 2-3 mm (90% | 75 Hz | 4p)</option>
+                                        <option value="cuero_grabado">Cuero Natural (72% | 130 Hz)</option>
+                                        <option value="acrilico_oscuro_grabado">Acrilico Oscuro (82% | 115 Hz)</option>
                                     </select>
                                     <small class="img-info" id="lbl-laser-preset-desc"></small>
+                                    <button type="button" class="btn-action-cyan full-btn" style="margin-top:6px;" id="btn-abrir-calibracion-laser" onclick="abrirModalCalibracionLaser()">Calibrar Material Actual</button>
                                 </div>
 
                                 <div class="param-group">
@@ -2078,6 +2080,10 @@
                         </select>
                         <button type="button" class="btn-subtle" onclick="cargarPerfilSeleccionado()">Cargar</button>
                         <button type="button" class="btn-profile-update" onclick="guardarPerfilActual('actualizar')">Actualizar Actual</button>
+                    </div>
+                    <div class="modal-inline-row" style="margin-top:6px;">
+                        <button type="button" class="btn-action-cyan" id="btn-profile-set-default" onclick="fijarPerfilComoPredeterminado()">Fijar como Predeterminado al Iniciar</button>
+                        <small class="img-info" id="profile-default-badge" style="margin:0;">Predeterminado: --</small>
                     </div>
                     <small class="img-info" id="profile-desc-text">Carpeta: perfiles/</small>
                 </div>
@@ -2525,6 +2531,145 @@
                 <button type="button" class="btn-subtle" onclick="cancelarModal('modal-importar-svg')">Cancelar</button>
                 <button type="button" class="btn-modal-apply" id="btn-svg-modal-apply" onclick="aplicarModal('modal-importar-svg')" disabled>Insertar SVG al Estudio</button>
             </div>
+        </div>
+    </div>
+
+    <!-- PANEL FLOTANTE LATERAL INDEPENDIENTE: CALIBRACION DE TRAZOS 4X4 (SOBRE CONTROL DE PAUSA) -->
+    <div class="desktop-modal cal-floating-panel hidden" id="modal-calibracion-laser" role="dialog" aria-modal="false">
+        <div class="modal-titlebar cal-drag-handle" id="cal-drag-handle" title="Arrastra para mover este panel">
+            <div class="panel-title-with-info">
+                <span>Calibracion de Trazos Laser 4x4</span>
+                <button type="button" class="info-tip-btn" data-info-key="calibracion_4x4" aria-label="Informacion sobre Calibracion 4x4">i</button>
+            </div>
+            <div class="cal-titlebar-btns">
+                <button type="button" class="modal-close-btn" id="btn-cal-toggle-min" onclick="alternarMinimizarCalibracionLaser()" title="Minimizar o expandir panel">_</button>
+                <button type="button" class="modal-close-btn" onclick="cerrarModalCalibracionLaser()" title="Cerrar panel">X</button>
+            </div>
+        </div>
+        <div class="modal-body">
+            <div class="cal-summary-bar">
+                <div class="cal-summary-item">
+                    <span class="cal-summary-lbl">Material Activo</span>
+                    <strong id="cal-lbl-material">--</strong>
+                </div>
+                <div class="cal-summary-item">
+                    <span class="cal-summary-lbl">Posicion Origen</span>
+                    <strong id="cal-lbl-posicion">X: 0.0 mm | Y: 0.0 mm</strong>
+                </div>
+                <div class="cal-summary-item">
+                    <span class="cal-summary-lbl">Tamano Total en Plano</span>
+                    <div class="cal-size-inline">
+                        <input type="number" id="input-cal-tamano-plano" value="40" min="20" max="250" step="5" oninput="actualizarTamanoPlanoCalibracion(this.value)" onchange="actualizarTamanoPlanoCalibracion(this.value)">
+                        <span>mm</span>
+                    </div>
+                    <div class="cal-size-chips">
+                        <button type="button" class="chip" onclick="actualizarTamanoPlanoCalibracion(40)">40</button>
+                        <button type="button" class="chip" onclick="actualizarTamanoPlanoCalibracion(60)">60</button>
+                        <button type="button" class="chip" onclick="actualizarTamanoPlanoCalibracion(80)">80</button>
+                        <button type="button" class="chip" onclick="actualizarTamanoPlanoCalibracion(100)">100</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="cal-actions-row">
+                <button type="button" class="btn-action-cyan" id="btn-cal-iniciar" onclick="iniciarPruebaMatrizCalibracion()">Iniciar Prueba en Material</button>
+                <button type="button" class="btn-estop" id="btn-cal-abortar" onclick="abortarPruebaMatrizCalibracion()" disabled>Abortar Emergencia (0 W)</button>
+            </div>
+
+            <div class="cal-status-box" id="cal-status-box">
+                <div class="cal-status-text" id="cal-status-text">Coloca el material enfocado en la mesa, verifica que el laser este armado y presiona Iniciar Prueba en Material.</div>
+                <div class="cal-progress-track">
+                    <div class="cal-progress-fill" id="cal-progress-fill" style="width: 0%;"></div>
+                </div>
+            </div>
+
+            <div class="cal-section-head">
+                <span class="cal-section-title">Guia Visual de Contraste (Que buscar en la prueba fisica)</span>
+                <button type="button" class="info-tip-btn" data-info-key="calibracion_guia" aria-label="Informacion sobre geometria de cada celda">i</button>
+            </div>
+            <div class="cal-guide-grid">
+                <div class="cal-guide-card cal-guide-ok">
+                    <div class="cal-guide-svg">
+                        <svg viewBox="0 0 90 54" width="90" height="54" aria-hidden="true">
+                            <polyline points="8,10 80,10 80,30 56,48" fill="none" stroke="#16a34a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            <path d="M 14,32 A 14,14 0 0,1 42,32" fill="none" stroke="#16a34a" stroke-width="2" stroke-linecap="round"/>
+                            <line x1="8" y1="43" x2="42" y2="43" stroke="#16a34a" stroke-width="1.6"/>
+                            <line x1="8" y1="48" x2="42" y2="48" stroke="#16a34a" stroke-width="1.6"/>
+                        </svg>
+                    </div>
+                    <div class="cal-guide-info">
+                        <strong>Trazo Optimo</strong>
+                        <p>Linea continua sin cortes, curva cerrada sin puntos gruesos, esquinas limpias y paralelas (0.4 mm) separadas.</p>
+                    </div>
+                </div>
+                <div class="cal-guide-card cal-guide-low">
+                    <div class="cal-guide-svg">
+                        <svg viewBox="0 0 90 54" width="90" height="54" aria-hidden="true">
+                            <polyline points="8,10 80,10 80,30 56,48" fill="none" stroke="#d97706" stroke-width="1.4" stroke-dasharray="3 5"/>
+                            <circle cx="80" cy="10" r="2.2" fill="#d97706"/>
+                            <path d="M 14,32 A 14,14 0 0,1 42,32" fill="none" stroke="#d97706" stroke-width="1.3" stroke-dasharray="2 6"/>
+                            <line x1="8" y1="43" x2="42" y2="43" stroke="#d97706" stroke-width="1.2" stroke-dasharray="2 5"/>
+                            <line x1="8" y1="48" x2="42" y2="48" stroke="#d97706" stroke-width="1.2" stroke-dasharray="2 5"/>
+                        </svg>
+                    </div>
+                    <div class="cal-guide-info">
+                        <strong>Falta de Energia</strong>
+                        <p>Trazos punteados, discontinuos o solo marcas tenues en las esquinas y extremos de curvas (zonas muertas).</p>
+                    </div>
+                </div>
+                <div class="cal-guide-card cal-guide-high">
+                    <div class="cal-guide-svg">
+                        <svg viewBox="0 0 90 54" width="90" height="54" aria-hidden="true">
+                            <polyline points="8,10 80,10 80,30 56,48" fill="none" stroke="rgba(220,38,38,0.32)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+                            <polyline points="8,10 80,10 80,30 56,48" fill="none" stroke="#dc2626" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/>
+                            <path d="M 14,32 A 14,14 0 0,1 42,32" fill="none" stroke="#dc2626" stroke-width="3.2"/>
+                            <rect x="8" y="41.5" width="34" height="8" rx="2" fill="#dc2626" opacity="0.85"/>
+                        </svg>
+                    </div>
+                    <div class="cal-guide-info">
+                        <strong>Exceso de Energia</strong>
+                        <p>Halo carbonizado alrededor del trazo, esquinas quemadas o lineas paralelas de 0.4 mm fundidas entre si.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="cal-section-head">
+                <span class="cal-section-title">Cuadricula Interactiva 4x4 (Selecciona la celda ganadora)</span>
+                <button type="button" class="info-tip-btn" data-info-key="calibracion_matriz" aria-label="Informacion sobre lectura de la matriz 4x4">i</button>
+            </div>
+            <div class="cal-matrix-wrapper">
+                <div class="cal-axis-y">
+                    <span>Mayor Velocidad (Hz)</span>
+                    <span class="cal-axis-arrow">^</span>
+                    <span>Menor Velocidad</span>
+                </div>
+                <div class="cal-matrix-main">
+                    <div class="cal-matrix-grid" id="cal-matrix-grid">
+                        <!-- Generado dinamicamente por JS (Celdas 1 a 16, fila superior 13..16, inferior 1..4) -->
+                    </div>
+                    <div class="cal-axis-x">
+                        <span>Menor Potencia (%)</span>
+                        <span class="cal-axis-arrow">----------------&gt;</span>
+                        <span>Mayor Potencia (%)</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="cal-selected-detail" id="cal-selected-detail">
+                Ejecuta la prueba fisica o selecciona una celda (1 a 16) para inspeccionar su Potencia, Velocidad y Retraso.
+            </div>
+
+            <div class="cal-global-row">
+                <label class="cal-global-check">
+                    <input type="checkbox" id="chk-cal-factor-global">
+                    <span>Autoajustar proporcionalmente el resto de perfiles con este resultado (K_cal)</span>
+                </label>
+                <button type="button" class="info-tip-btn" data-info-key="calibracion_kcal" aria-label="Informacion sobre factor global K_cal">i</button>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" class="btn-subtle" onclick="cerrarModalCalibracionLaser()">Cerrar</button>
+            <button type="button" class="btn-modal-apply" id="btn-cal-guardar" onclick="guardarResultadoCalibracionLaser()" disabled>Guardar Calibracion en Perfil</button>
         </div>
     </div>
 
