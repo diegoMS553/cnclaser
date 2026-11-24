@@ -2553,13 +2553,28 @@
                     <strong id="cal-lbl-material">--</strong>
                 </div>
                 <div class="cal-summary-item">
-                    <span class="cal-summary-lbl">Posicion Origen</span>
-                    <strong id="cal-lbl-posicion">X: 0.0 mm | Y: 0.0 mm</strong>
+                    <span class="cal-summary-lbl">Ubicacion en Plano (Arrastrable)</span>
+                    <div class="cal-origin-grid">
+                        <div class="cal-size-inline">
+                            <span>X</span>
+                            <input type="number" id="input-cal-origen-x" value="0" min="0" max="350" step="1" oninput="actualizarOrigenMatrizCalibracion(this.value, null)" onchange="actualizarOrigenMatrizCalibracion(this.value, null)">
+                        </div>
+                        <div class="cal-size-inline">
+                            <span>Y</span>
+                            <input type="number" id="input-cal-origen-y" value="0" min="0" max="350" step="1" oninput="actualizarOrigenMatrizCalibracion(null, this.value)" onchange="actualizarOrigenMatrizCalibracion(null, this.value)">
+                        </div>
+                    </div>
+                    <div class="cal-size-chips">
+                        <button type="button" class="chip" onclick="ubicarMatrizCalibracionPreset('cabezal')" title="Ubicar en la posicion actual del cabezal">Cabezal</button>
+                        <button type="button" class="chip" onclick="ubicarMatrizCalibracionPreset('centro')" title="Centrar matriz en el area operable">Centro</button>
+                        <button type="button" class="chip" onclick="ubicarMatrizCalibracionPreset('cero')" title="Ubicar en el origen (0,0)">(0,0)</button>
+                    </div>
+                    <small class="cal-origin-hint" id="cal-lbl-posicion">Arrastra la matriz en el lienzo para ubicarla</small>
                 </div>
                 <div class="cal-summary-item">
                     <span class="cal-summary-lbl">Tamano Total en Plano</span>
                     <div class="cal-size-inline">
-                        <input type="number" id="input-cal-tamano-plano" value="40" min="20" max="250" step="5" oninput="actualizarTamanoPlanoCalibracion(this.value)" onchange="actualizarTamanoPlanoCalibracion(this.value)">
+                        <input type="number" id="input-cal-tamano-plano" value="40" min="20" max="250" step="0.5" oninput="actualizarTamanoPlanoCalibracion(this.value)" onchange="actualizarTamanoPlanoCalibracion(this.value)">
                         <span>mm</span>
                     </div>
                     <div class="cal-size-chips">
@@ -2599,7 +2614,7 @@
                     </div>
                     <div class="cal-guide-info">
                         <strong>Trazo Optimo</strong>
-                        <p>Linea continua sin cortes, curva cerrada sin puntos gruesos, esquinas limpias y paralelas (0.4 mm) separadas.</p>
+                        <p>Linea continua sin cortes, arco limpio sin puntos gruesos, esquinas definidas y lineas paralelas abiertas y separadas.</p>
                     </div>
                 </div>
                 <div class="cal-guide-card cal-guide-low">
@@ -2628,7 +2643,7 @@
                     </div>
                     <div class="cal-guide-info">
                         <strong>Exceso de Energia</strong>
-                        <p>Halo carbonizado alrededor del trazo, esquinas quemadas o lineas paralelas de 0.4 mm fundidas entre si.</p>
+                        <p>Halo carbonizado alrededor del trazo, esquinas quemadas o lineas paralelas fusionadas entre si.</p>
                     </div>
                 </div>
             </div>

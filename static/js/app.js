@@ -2024,6 +2024,44 @@ function configurarEventosLienzoDibujo() {
         if (lblMM) lblMM.textContent = `X: ${pt.x.toFixed(1)} mm, Y: ${pt.y.toFixed(1)} mm`;
         if (lblSteps) lblSteps.textContent = `(${Math.round(pt.x * esc)}, ${Math.round(pt.y * esc)} pulsos)`;
 
+        // Arrastre y reescalado directo de la Matriz de Calibracion 4x4 sobre el plano
+        if (typeof calibracionLaserUI !== "undefined" && calibracionLaserUI.abierta && !calibracionLaserUI.ejecutando) {
+            if (calibracionLaserUI.reescalandoEnPlano) {
+                aplicarReescaladoMatrizDesdeManija(pt);
+                const m = calibracionLaserUI.manijaResize;
+                canvas.style.cursor = (m === "nw" || m === "se") ? "nwse-resize" : "nesw-resize";
+                return;
+            }
+            if (calibracionLaserUI.arrastrandoEnPlano) {
+                actualizarOrigenMatrizCalibracion(
+                    pt.x - calibracionLaserUI.dragOffsetXMM,
+                    pt.y - calibracionLaserUI.dragOffsetYMM
+                );
+                canvas.style.cursor = "grabbing";
+                return;
+            }
+            const gMat = obtenerGeometriaMatrizCalibracion();
+            const manijaHover = detectarManijaMatrizCalibracion(dibujo.cursorCanvas, gMat);
+            if (manijaHover) {
+                canvas.style.cursor = (manijaHover === "nw" || manijaHover === "se") ? "nwse-resize" : "nesw-resize";
+            } else {
+                const sobreMat = (
+                    pt.x >= gMat.ox && pt.x <= (gMat.ox + gMat.anchoMat) &&
+                    pt.y >= gMat.oy && pt.y <= (gMat.oy + gMat.altoMat)
+                );
+                if (sobreMat) {
+                    canvas.style.cursor = "grab";
+                } else if (
+                    canvas.style.cursor === "grab" ||
+                    canvas.style.cursor === "grabbing" ||
+                    canvas.style.cursor === "nwse-resize" ||
+                    canvas.style.cursor === "nesw-resize"
+                ) {
+                    canvas.style.cursor = "";
+                }
+            }
+        }
+
         if (dibujo.herramienta === "select") {
             moverArrastreSeleccion(e);
             return;
@@ -2066,6 +2104,45 @@ function configurarEventosLienzoDibujo() {
         const cc = canvasDesdeEvento(e);
         if (cc.x < vistaDibujo.area.x || cc.y < vistaDibujo.area.y) return;
 
+        // Permitir reescalar desde esquinas o arrastrar la Matriz de Calibracion 4x4 directamente en el plano
+        if (typeof calibracionLaserUI !== "undefined" && calibracionLaserUI.abierta && !calibracionLaserUI.ejecutando) {
+            const ptMat = pantallaAMilimetrosDibujo(e.clientX, e.clientY);
+            const gMat = obtenerGeometriaMatrizCalibracion();
+            const manija = detectarManijaMatrizCalibracion(cc, gMat);
+            if (manija) {
+                calibracionLaserUI.reescalandoEnPlano = true;
+                calibracionLaserUI.manijaResize = manija;
+                // Fijar la esquina opuesta como ancla
+                if (manija === "ne") {
+                    calibracionLaserUI.anchorXMM = gMat.ox;
+                    calibracionLaserUI.anchorYMM = gMat.oy;
+                } else if (manija === "se") {
+                    calibracionLaserUI.anchorXMM = gMat.ox;
+                    calibracionLaserUI.anchorYMM = gMat.oy + gMat.altoMat;
+                } else if (manija === "nw") {
+                    calibracionLaserUI.anchorXMM = gMat.ox + gMat.anchoMat;
+                    calibracionLaserUI.anchorYMM = gMat.oy;
+                } else {
+                    calibracionLaserUI.anchorXMM = gMat.ox + gMat.anchoMat;
+                    calibracionLaserUI.anchorYMM = gMat.oy + gMat.altoMat;
+                }
+                canvas.style.cursor = (manija === "nw" || manija === "se") ? "nwse-resize" : "nesw-resize";
+                dibujarEstudioDibujo();
+                return;
+            }
+            if (
+                ptMat.x >= gMat.ox && ptMat.x <= (gMat.ox + gMat.anchoMat) &&
+                ptMat.y >= gMat.oy && ptMat.y <= (gMat.oy + gMat.altoMat)
+            ) {
+                calibracionLaserUI.arrastrandoEnPlano = true;
+                calibracionLaserUI.dragOffsetXMM = ptMat.x - gMat.ox;
+                calibracionLaserUI.dragOffsetYMM = ptMat.y - gMat.oy;
+                canvas.style.cursor = "grabbing";
+                dibujarEstudioDibujo();
+                return;
+            }
+        }
+
         if (dibujo.herramienta === "select") {
             iniciarArrastreSeleccion(e);
             return;
@@ -2100,6 +2177,14 @@ function configurarEventosLienzoDibujo() {
 
     window.addEventListener("mouseup", () => {
         if (finalizarPanSiActivo()) return;
+        if (typeof calibracionLaserUI !== "undefined" && (calibracionLaserUI.arrastrandoEnPlano || calibracionLaserUI.reescalandoEnPlano)) {
+            calibracionLaserUI.arrastrandoEnPlano = false;
+            calibracionLaserUI.reescalandoEnPlano = false;
+            calibracionLaserUI.manijaResize = null;
+            canvas.style.cursor = "";
+            dibujarEstudioDibujo();
+            return;
+        }
         if (dibujo.arrastre) {
             finalizarArrastreSeleccion();
             return;
@@ -2618,6 +2703,7 @@ async function ejecutarDibujoEnMaquina() {
         let velGrabadoRaw = parseInt(ls.velocidad_grabado_hz || 180, 10);
         if (velGrabadoRaw >= 600) velGrabadoRaw = 180;
         const velGrabado = Math.max(25, Math.min(500, velGrabadoRaw));
+        const velViaje = Math.max(100, Math.min(1500, parseInt(ls.velocidad_viaje_hz || 500, 10) || 500));
         const totalPasadas = Math.max(1, parseInt(ls.pasadas || 1, 10));
         const pausaMs = Math.max(0, parseInt(ls.pausa_enfriamiento_ms || 0, 10));
         const usarZFoco = Boolean(ls.usar_z_foco);
@@ -2638,9 +2724,11 @@ async function ejecutarDibujoEnMaquina() {
         actualizarProgresoDibujoUI(0, totalTramos, "Iniciando Laser 5W...", inicioEjecucionMs, true);
 
         mostrarMensajeConsola(
-            `Iniciando Trabajo Laser 5W Sincronizado [${ls.modo_operacion || "grabado_linea"}]: ${wattsTrabajo.toFixed(2)}W (${pct.toFixed(0)}% | PWM ${pwmTrabajo}/255 | ${velGrabado} Hz)${armado ? "" : " [SIMULACION EN SECO 0W - DESARMADO]"} | ${totalPasadas} pasada(s)...`
+            `Iniciando Trabajo Laser 5W Sincronizado [${ls.modo_operacion || "grabado_linea"}]: ${wattsTrabajo.toFixed(2)}W (${pct.toFixed(0)}% | PWM ${pwmTrabajo}/255 | ${velGrabado} Hz | Viaje ${velViaje} Hz)${armado ? "" : " [SIMULACION EN SECO 0W - DESARMADO]"} | ${totalPasadas} pasada(s)...`
         );
 
+        let errorLaserExec = null;
+        try {
         // Asegurar laser en 0W y sincronizar estado de armado en el ESP32 antes de iniciar
         await apagarLaserEmergencia(true);
         if (armado) {
@@ -2794,22 +2882,27 @@ async function ejecutarDibujoEnMaquina() {
                 await new Promise(r => setTimeout(r, pausaMs));
             }
         }
-
-        await apagarLaserEmergencia(true);
-        const completadoLaser = dibujo.ejecutando;
-        dibujo.ejecutando = false;
-        dibujo.pausado = false;
-        dibujo.laserPwmActual = 0;
-        dibujo.figuraEjecutandoIdx = -1;
-        if (boxDraw) boxDraw.classList.add("hidden");
-        actualizarProgresoDibujoUI(completadoLaser ? totalTramos : tramosHechos, totalTramos, completadoLaser ? "Trabajo Laser completado" : "Detenido", inicioEjecucionMs, false);
-        renderizarListaFigurasDibujo();
-        await validarPosicionMotor();
-        if (completadoLaser) {
-            const extraDedup = tramosDuplicadosOmitidos > 0
-                ? ` (${tramosDuplicadosOmitidos} tramo(s) superpuesto(s) omitido(s) en 0W)`
-                : "";
-            mostrarMensajeConsola(`Trabajo Laser 5W completado${extraDedup}. Diodo apagado (0.00 W | PWM 0) y motores en reposo ENA.`);
+        } catch (err) {
+            errorLaserExec = err;
+            dibujo.ejecutando = false;
+            mostrarMensajeConsola(`Error durante la ejecucion Laser 5W: ${err?.message || err}`, true);
+        } finally {
+            await apagarLaserEmergencia(true);
+            const completadoLaser = dibujo.ejecutando && !errorLaserExec;
+            dibujo.ejecutando = false;
+            dibujo.pausado = false;
+            dibujo.laserPwmActual = 0;
+            dibujo.figuraEjecutandoIdx = -1;
+            if (boxDraw) boxDraw.classList.add("hidden");
+            actualizarProgresoDibujoUI(completadoLaser ? totalTramos : tramosHechos, totalTramos, completadoLaser ? "Trabajo Laser completado" : "Detenido", inicioEjecucionMs, false);
+            renderizarListaFigurasDibujo();
+            await validarPosicionMotor();
+            if (completadoLaser) {
+                const extraDedup = tramosDuplicadosOmitidos > 0
+                    ? ` (${tramosDuplicadosOmitidos} tramo(s) superpuesto(s) omitido(s) en 0W)`
+                    : "";
+                mostrarMensajeConsola(`Trabajo Laser 5W completado${extraDedup}. Diodo apagado (0.00 W | PWM 0) y motores en reposo ENA.`);
+            }
         }
         return;
     }
@@ -3339,26 +3432,24 @@ function dibujarEstudioDibujo() {
         ctx.restore();
     }
 
-    // Vista previa 1:1 en vivo de la Matriz de Calibracion 4x4 (tamano configurable en el plano)
+    // Vista previa 1:1 en vivo de la Matriz de Calibracion 4x4 (ubicacion y tamano configurables en el plano)
     if (typeof calibracionLaserUI !== "undefined" && calibracionLaserUI.abierta) {
-        const ox = Number(calibracionLaserUI.origenXMM ?? (Number(anim.x || 0) / escala));
-        const oy = Number(calibracionLaserUI.origenYMM ?? (Number(anim.y || 0) / escala));
-        const planoMM = Math.max(20, Math.min(250, Number(calibracionLaserUI.tamanoPlanoMM || 40)));
-        const gapMM = Math.max(1.0, planoMM * 0.04);
-        const celdaMM = (planoMM - 3.0 * gapMM) / 4.0;
-        const pasoMM = celdaMM + gapMM;
-        const anchoMat = 3.0 * pasoMM + celdaMM;
-        const altoMat = anchoMat;
+        const gMat = obtenerGeometriaMatrizCalibracion();
+        const { ox, oy, celdaMM, pasoMM, anchoMat, altoMat } = gMat;
         const [mx0, my0] = aCanvas(ox, oy + altoMat);
         const [mx1, my1] = aCanvas(ox + anchoMat, oy);
+        const arrastrando = Boolean(calibracionLaserUI.arrastrandoEnPlano || calibracionLaserUI.reescalandoEnPlano);
         ctx.save();
-        ctx.fillStyle = "rgba(34, 211, 238, 0.06)";
-        ctx.strokeStyle = "#22d3ee";
-        ctx.lineWidth = 1.6;
+        ctx.fillStyle = arrastrando ? "rgba(245, 158, 11, 0.10)" : "rgba(34, 211, 238, 0.06)";
+        ctx.strokeStyle = arrastrando ? "#f59e0b" : "#22d3ee";
+        ctx.lineWidth = arrastrando ? 2.2 : 1.6;
         ctx.setLineDash([5, 3]);
         ctx.fillRect(mx0, my0, mx1 - mx0, my1 - my0);
         ctx.strokeRect(mx0, my0, mx1 - mx0, my1 - my0);
         ctx.setLineDash([]);
+
+        const sCelda = celdaMM / 8.5;
+        const sepPar = Math.max(0.85, 0.95 * sCelda);
 
         let numC = 1;
         for (let fila = 0; fila < 4; fila++) {
@@ -3377,19 +3468,86 @@ function dibujarEstudioDibujo() {
                 ctx.fillRect(px0, py0, px1 - px0, py1 - py0);
                 ctx.strokeRect(px0, py0, px1 - px0, py1 - py0);
 
+                // Vista previa fiel de los trazos abiertos dentro de cada cuadrante cuando hay zoom suficiente
+                if ((px1 - px0) >= 22) {
+                    ctx.save();
+                    ctx.strokeStyle = sel ? "#34d399" : (activa ? "#fbbf24" : "rgba(224,242,254,0.65)");
+                    ctx.lineWidth = 1.1;
+
+                    // 1. Tramo H + V + Diagonal 45 deg
+                    const hvPts = [
+                        aCanvas(cx0 + 0.6 * sCelda, cy0 + 7.7 * sCelda),
+                        aCanvas(cx0 + 7.8 * sCelda, cy0 + 7.7 * sCelda),
+                        aCanvas(cx0 + 7.8 * sCelda, cy0 + 4.5 * sCelda),
+                        aCanvas(cx0 + 5.0 * sCelda, cy0 + 1.7 * sCelda)
+                    ];
+                    ctx.beginPath();
+                    ctx.moveTo(hvPts[0][0], hvPts[0][1]);
+                    for (let k = 1; k < hvPts.length; k++) ctx.lineTo(hvPts[k][0], hvPts[k][1]);
+                    ctx.stroke();
+
+                    // 2. Arco / semicirculo abierto
+                    ctx.beginPath();
+                    for (let k = 0; k <= 12; k++) {
+                        const ang = Math.PI * (k / 12);
+                        const ax = cx0 + 2.5 * sCelda + 1.55 * sCelda * Math.cos(ang);
+                        const ay = cy0 + 4.3 * sCelda + 1.55 * sCelda * Math.sin(ang);
+                        const [sx, sy] = aCanvas(ax, ay);
+                        if (k === 0) ctx.moveTo(sx, sy);
+                        else ctx.lineTo(sx, sy);
+                    }
+                    ctx.stroke();
+
+                    // 3. Par de lineas paralelas abiertas y separadas
+                    const yInf = cy0 + 0.9 * sCelda;
+                    const ySup = Math.min(cy0 + 3.5 * sCelda, yInf + sepPar);
+                    const [p1x, p1y] = aCanvas(cx0 + 0.6 * sCelda, yInf);
+                    const [p2x, p2y] = aCanvas(cx0 + 4.0 * sCelda, yInf);
+                    const [p3x, p3y] = aCanvas(cx0 + 0.6 * sCelda, ySup);
+                    const [p4x, p4y] = aCanvas(cx0 + 4.0 * sCelda, ySup);
+                    ctx.beginPath();
+                    ctx.moveTo(p1x, p1y);
+                    ctx.lineTo(p2x, p2y);
+                    ctx.moveTo(p3x, p3y);
+                    ctx.lineTo(p4x, p4y);
+                    ctx.stroke();
+                    ctx.restore();
+                }
+
                 if ((px1 - px0) >= 12) {
                     ctx.fillStyle = sel ? "#10b981" : (activa ? "#fbbf24" : "#e4e4e7");
                     ctx.font = "600 9px 'JetBrains Mono', monospace";
-                    ctx.textAlign = "center";
-                    ctx.fillText(String(numC), (px0 + px1) * 0.5, (py0 + py1) * 0.5 + 3);
+                    ctx.textAlign = "left";
+                    ctx.fillText(String(numC), px0 + 3, py0 + 10);
                 }
                 numC++;
             }
         }
-        ctx.fillStyle = "#22d3ee";
+        // Manijas de reescalado en las 4 esquinas cuando no esta ejecutando
+        if (!calibracionLaserUI.ejecutando) {
+            const esquinas = [
+                [mx0, my0],
+                [mx1, my0],
+                [mx0, my1],
+                [mx1, my1]
+            ];
+            ctx.fillStyle = "#09090b";
+            ctx.strokeStyle = arrastrando ? "#f59e0b" : "#22d3ee";
+            ctx.lineWidth = 1.8;
+            esquinas.forEach(([hx, hy]) => {
+                ctx.fillRect(hx - 4.5, hy - 4.5, 9, 9);
+                ctx.strokeRect(hx - 4.5, hy - 4.5, 9, 9);
+            });
+        }
+
+        ctx.fillStyle = arrastrando ? "#fbbf24" : "#22d3ee";
         ctx.font = "600 10px 'JetBrains Mono', monospace";
         ctx.textAlign = "left";
-        ctx.fillText(`MATRIZ 4x4 (${anchoMat.toFixed(1)}x${altoMat.toFixed(1)} mm @ ${escala.toFixed(1)} P/mm)`, mx0, my0 - 5);
+        ctx.fillText(
+            `MATRIZ 4x4 (${anchoMat.toFixed(1)}x${altoMat.toFixed(1)} mm) @ X:${ox.toFixed(1)}, Y:${oy.toFixed(1)} mm [Arrastra centro o esquinas]`,
+            mx0,
+            my0 - 7
+        );
         ctx.restore();
     }
 
@@ -7284,16 +7442,151 @@ const calibracionLaserUI = {
     celdaSeleccionada: null,
     celdaActivaEnPrueba: 0,
     pollTimer: null,
-    arrastreIniciado: false
+    arrastreIniciado: false,
+    arrastrandoEnPlano: false,
+    dragOffsetXMM: 0,
+    dragOffsetYMM: 0,
+    reescalandoEnPlano: false,
+    manijaResize: null,
+    anchorXMM: 0,
+    anchorYMM: 0
 };
+
+function detectarManijaMatrizCalibracion(cc, gMat) {
+    if (!cc || !gMat) return null;
+    const radioPx = 10;
+    const esquinas = [
+        { id: "nw", pt: aCanvasDibujo(gMat.ox, gMat.oy + gMat.altoMat) },
+        { id: "ne", pt: aCanvasDibujo(gMat.ox + gMat.anchoMat, gMat.oy + gMat.altoMat) },
+        { id: "sw", pt: aCanvasDibujo(gMat.ox, gMat.oy) },
+        { id: "se", pt: aCanvasDibujo(gMat.ox + gMat.anchoMat, gMat.oy) }
+    ];
+    for (const c of esquinas) {
+        if (Math.hypot(cc.x - c.pt[0], cc.y - c.pt[1]) <= radioPx) {
+            return c.id;
+        }
+    }
+    return null;
+}
+
+function aplicarReescaladoMatrizDesdeManija(pt) {
+    if (!pt || calibracionLaserUI.ejecutando) return;
+    const { anchoMM, altoMM } = obtenerLimitesMesaMM();
+    const m = calibracionLaserUI.manijaResize;
+    const ax = Number(calibracionLaserUI.anchorXMM || 0);
+    const ay = Number(calibracionLaserUI.anchorYMM || 0);
+
+    let dx = 0;
+    let dy = 0;
+    let maxTam = 250;
+
+    if (m === "ne") {
+        dx = pt.x - ax;
+        dy = pt.y - ay;
+        maxTam = Math.min(250, anchoMM - ax, altoMM - ay);
+    } else if (m === "se") {
+        dx = pt.x - ax;
+        dy = ay - pt.y;
+        maxTam = Math.min(250, anchoMM - ax, ay);
+    } else if (m === "nw") {
+        dx = ax - pt.x;
+        dy = pt.y - ay;
+        maxTam = Math.min(250, ax, altoMM - ay);
+    } else if (m === "sw") {
+        dx = ax - pt.x;
+        dy = ay - pt.y;
+        maxTam = Math.min(250, ax, ay);
+    } else {
+        return;
+    }
+
+    const tamRaw = Math.max(dx, dy);
+    const tamLim = Math.max(20, Math.min(Math.max(20, maxTam), tamRaw));
+    const nuevoTam = Math.round(tamLim * 2) / 2; // precision 0.5 mm
+
+    let nuevoOx = ax;
+    let nuevoOy = ay;
+    if (m === "se") {
+        nuevoOy = ay - nuevoTam;
+    } else if (m === "nw") {
+        nuevoOx = ax - nuevoTam;
+    } else if (m === "sw") {
+        nuevoOx = ax - nuevoTam;
+        nuevoOy = ay - nuevoTam;
+    }
+
+    calibracionLaserUI.tamanoPlanoMM = nuevoTam;
+    const inpTam = document.getElementById("input-cal-tamano-plano");
+    if (inpTam) inpTam.value = String(nuevoTam);
+    actualizarOrigenMatrizCalibracion(nuevoOx, nuevoOy, true);
+}
+
+function obtenerGeometriaMatrizCalibracion() {
+    const { anchoMM, altoMM } = obtenerLimitesMesaMM();
+    const planoMM = Math.max(20, Math.min(250, Number(calibracionLaserUI.tamanoPlanoMM || 40)));
+    const gapMM = Math.max(1.0, planoMM * 0.04);
+    const celdaMM = (planoMM - 3.0 * gapMM) / 4.0;
+    const pasoMM = celdaMM + gapMM;
+    const anchoMat = 3.0 * pasoMM + celdaMM;
+    const altoMat = anchoMat;
+    const maxOx = Math.max(0, anchoMM - anchoMat);
+    const maxOy = Math.max(0, altoMM - altoMat);
+    const ox = Math.max(0, Math.min(maxOx, Number(calibracionLaserUI.origenXMM || 0)));
+    const oy = Math.max(0, Math.min(maxOy, Number(calibracionLaserUI.origenYMM || 0)));
+    return { ox, oy, planoMM, gapMM, celdaMM, pasoMM, anchoMat, altoMat, maxOx, maxOy, anchoMM, altoMM };
+}
+
+function actualizarOrigenMatrizCalibracion(xRaw, yRaw, redibujar = true) {
+    if (calibracionLaserUI.ejecutando) return;
+    const g = obtenerGeometriaMatrizCalibracion();
+    const nx = (xRaw !== null && xRaw !== undefined && xRaw !== "") ? Number(xRaw) : Number(calibracionLaserUI.origenXMM || 0);
+    const ny = (yRaw !== null && yRaw !== undefined && yRaw !== "") ? Number(yRaw) : Number(calibracionLaserUI.origenYMM || 0);
+    const ox = Math.max(0, Math.min(g.maxOx, Number.isFinite(nx) ? nx : 0));
+    const oy = Math.max(0, Math.min(g.maxOy, Number.isFinite(ny) ? ny : 0));
+
+    calibracionLaserUI.origenXMM = Number(ox.toFixed(1));
+    calibracionLaserUI.origenYMM = Number(oy.toFixed(1));
+
+    const inpX = document.getElementById("input-cal-origen-x");
+    const inpY = document.getElementById("input-cal-origen-y");
+    if (inpX) {
+        inpX.max = String(Math.floor(g.maxOx));
+        if (document.activeElement !== inpX) inpX.value = calibracionLaserUI.origenXMM.toFixed(1);
+    }
+    if (inpY) {
+        inpY.max = String(Math.floor(g.maxOy));
+        if (document.activeElement !== inpY) inpY.value = calibracionLaserUI.origenYMM.toFixed(1);
+    }
+    const lblPos = document.getElementById("cal-lbl-posicion");
+    if (lblPos) {
+        lblPos.textContent = `Origen: (${calibracionLaserUI.origenXMM.toFixed(1)}, ${calibracionLaserUI.origenYMM.toFixed(1)}) mm | Arrastrable`;
+    }
+    if (redibujar) dibujarEstudioDibujo();
+}
+
+function ubicarMatrizCalibracionPreset(modo) {
+    if (calibracionLaserUI.ejecutando) return;
+    const g = obtenerGeometriaMatrizCalibracion();
+    const esc = Math.max(0.01, Number(estado.pasos_por_mm || 50));
+    if (modo === "cabezal") {
+        actualizarOrigenMatrizCalibracion(Number(estado.pos_x || 0) / esc, Number(estado.pos_y || 0) / esc);
+    } else if (modo === "centro") {
+        actualizarOrigenMatrizCalibracion((g.anchoMM - g.anchoMat) * 0.5, (g.altoMM - g.altoMat) * 0.5);
+    } else if (modo === "cero") {
+        actualizarOrigenMatrizCalibracion(0, 0);
+    }
+}
 
 function actualizarTamanoPlanoCalibracion(valRaw) {
     if (calibracionLaserUI.ejecutando) return;
-    const val = Math.max(20, Math.min(250, Math.round(Number(valRaw) || 40)));
+    const { anchoMM, altoMM } = obtenerLimitesMesaMM();
+    const maxPlano = Math.max(20, Math.min(250, Math.floor(Math.min(anchoMM, altoMM))));
+    const valNum = Number(valRaw);
+    const val = Math.max(20, Math.min(maxPlano, Math.round((Number.isFinite(valNum) ? valNum : 40) * 2) / 2));
     calibracionLaserUI.tamanoPlanoMM = val;
     const inp = document.getElementById("input-cal-tamano-plano");
-    if (inp && Number(inp.value) !== val) inp.value = String(val);
-    dibujarEstudioDibujo();
+    if (inp && document.activeElement !== inp && Number(inp.value) !== val) inp.value = String(val);
+    actualizarOrigenMatrizCalibracion(calibracionLaserUI.origenXMM, calibracionLaserUI.origenYMM, true);
 }
 
 async function fijarPerfilComoPredeterminado() {
@@ -7414,15 +7707,13 @@ function abrirModalCalibracionLaser() {
     calibracionLaserUI.minimizada = false;
     calibracionLaserUI.ejecutando = false;
     calibracionLaserUI.pruebaCompletada = false;
+    calibracionLaserUI.arrastrandoEnPlano = false;
     calibracionLaserUI.idMaterial = idMat;
-    calibracionLaserUI.origenXMM = xMM;
-    calibracionLaserUI.origenYMM = yMM;
     calibracionLaserUI.celdaSeleccionada = null;
     calibracionLaserUI.celdaActivaEnPrueba = 0;
     calibracionLaserUI.tablaCeldas = _construirPreviewTabla4x4(idMat);
 
     const lblMat = document.getElementById("cal-lbl-material");
-    const lblPos = document.getElementById("cal-lbl-posicion");
     const txtStatus = document.getElementById("cal-status-text");
     const fillBar = document.getElementById("cal-progress-fill");
     const detail = document.getElementById("cal-selected-detail");
@@ -7433,8 +7724,8 @@ function abrirModalCalibracionLaser() {
     const chkGlobal = document.getElementById("chk-cal-factor-global");
 
     if (lblMat) lblMat.textContent = infoMat.nombre || idMat;
-    if (lblPos) lblPos.textContent = `X: ${xMM.toFixed(1)} mm | Y: ${yMM.toFixed(1)} mm (${esc.toFixed(1)} P/mm)`;
-    if (txtStatus) txtStatus.textContent = "Panel acoplado sobre el boton de pausa para que observes el lienzo en vivo. Presiona Iniciar Prueba en Material.";
+    actualizarOrigenMatrizCalibracion(xMM, yMM, false);
+    if (txtStatus) txtStatus.textContent = "Arrastra la matriz en el lienzo o ajusta X/Y para ubicarla donde desees, luego presiona Iniciar Prueba en Material.";
     if (fillBar) fillBar.style.width = "0%";
     if (detail) detail.textContent = "Ejecuta la prueba fisica para habilitar la seleccion interactiva de las 16 celdas (1 a 16).";
     if (btnIniciar) btnIniciar.disabled = false;
@@ -7528,10 +7819,12 @@ async function iniciarPruebaMatrizCalibracion() {
 
     const idMat = calibracionLaserUI.idMaterial || estado.laser?.preset_material || "madera_grabado_fino";
     const esc = Math.max(0.01, Number(estado.pasos_por_mm || 50));
-    const origenX = Number((Number(estado.pos_x || 0) / esc).toFixed(3));
-    const origenY = Number((Number(estado.pos_y || 0) / esc).toFixed(3));
+    const gMat = obtenerGeometriaMatrizCalibracion();
+    const origenX = Number(gMat.ox.toFixed(3));
+    const origenY = Number(gMat.oy.toFixed(3));
     calibracionLaserUI.origenXMM = origenX;
     calibracionLaserUI.origenYMM = origenY;
+    calibracionLaserUI.arrastrandoEnPlano = false;
 
     calibracionLaserUI.ejecutando = true;
     calibracionLaserUI.pruebaCompletada = false;
@@ -7543,10 +7836,16 @@ async function iniciarPruebaMatrizCalibracion() {
     const btnIniciar = document.getElementById("btn-cal-iniciar");
     const btnAbortar = document.getElementById("btn-cal-abortar");
     const btnGuardar = document.getElementById("btn-cal-guardar");
+    const inpOx = document.getElementById("input-cal-origen-x");
+    const inpOy = document.getElementById("input-cal-origen-y");
+    const inpTam = document.getElementById("input-cal-tamano-plano");
 
     if (btnIniciar) btnIniciar.disabled = true;
     if (btnAbortar) btnAbortar.disabled = false;
     if (btnGuardar) btnGuardar.disabled = true;
+    if (inpOx) inpOx.disabled = true;
+    if (inpOy) inpOy.disabled = true;
+    if (inpTam) inpTam.disabled = true;
     if (txtStatus) txtStatus.textContent = `Ejecutando matriz 4x4 desde (${origenX.toFixed(1)}, ${origenY.toFixed(1)}) mm...`;
     if (fillBar) fillBar.style.width = "4%";
     renderizarCuadriculaCalibracion4x4();
@@ -7633,6 +7932,9 @@ async function iniciarPruebaMatrizCalibracion() {
     } finally {
         if (btnIniciar) btnIniciar.disabled = false;
         if (btnAbortar) btnAbortar.disabled = true;
+        if (inpOx) inpOx.disabled = false;
+        if (inpOy) inpOy.disabled = false;
+        if (inpTam) inpTam.disabled = false;
         renderizarCuadriculaCalibracion4x4();
     }
 }

@@ -97,7 +97,8 @@ def _generar_geometria_cuadrante(cx, cy, celda_tam_mm=8.5):
     """
     Construye la geometria especializada para una celda de (celda_tam_mm x celda_tam_mm)
     anclada en (cx, cy), escalando proporcionalmente los trazos segun el tamano total
-    del plano configurado y conservando exactamente 0.4 mm en el par paralelo de kerf.
+    del plano configurado. Mantiene separacion abierta y legible en el par paralelo
+    para evitar que se fusione o parezca una figura cerrada en matrices compactas.
     """
     trazos = []
     s = float(celda_tam_mm) / 8.5
@@ -105,19 +106,19 @@ def _generar_geometria_cuadrante(cx, cy, celda_tam_mm=8.5):
     # 1. Tramo H (con aproximacion previa 0W) + Vertice 90 deg + Tramo V + Diagonal 45 deg
     trazos.append({
         "tipo": "h_v_diag",
-        "pre_aprox": [round(cx + 0.1 * s, 3), round(cy + 7.6 * s, 3)],
+        "pre_aprox": [round(cx + 0.1 * s, 3), round(cy + 7.7 * s, 3)],
         "puntos": [
-            [round(cx + 0.6 * s, 3), round(cy + 7.6 * s, 3)],
-            [round(cx + 7.6 * s, 3), round(cy + 7.6 * s, 3)],  # Horizontal
-            [round(cx + 7.6 * s, 3), round(cy + 4.6 * s, 3)],  # Vertice 90 deg + Vertical
-            [round(cx + 4.6 * s, 3), round(cy + 1.6 * s, 3)]   # Diagonal 45 deg
+            [round(cx + 0.6 * s, 3), round(cy + 7.7 * s, 3)],
+            [round(cx + 7.8 * s, 3), round(cy + 7.7 * s, 3)],  # Horizontal
+            [round(cx + 7.8 * s, 3), round(cy + 4.5 * s, 3)],  # Vertice 90 deg + Vertical
+            [round(cx + 5.0 * s, 3), round(cy + 1.7 * s, 3)]   # Diagonal 45 deg
         ]
     })
 
-    # 2. Arco / semicirculo compacto (12 segmentos suaves)
-    centro_x = cx + 2.3 * s
-    centro_y = cy + 4.8 * s
-    radio = 1.5 * s
+    # 2. Arco / semicirculo abierto (12 segmentos suaves) con holgura respecto a otros trazos
+    centro_x = cx + 2.5 * s
+    centro_y = cy + 4.3 * s
+    radio = 1.55 * s
     pasos_arco = 12
     pts_arco = []
     for k in range(pasos_arco + 1):
@@ -131,23 +132,25 @@ def _generar_geometria_cuadrante(cx, cy, celda_tam_mm=8.5):
         "puntos": pts_arco
     })
 
-    # 3. Par paralelo cerrado con separacion fisica exacta de 0.4 mm (evaluacion de kerf y sangrado)
-    y_par_inf = cy + 1.0 * s
-    y_par_sup = y_par_inf + 0.4
+    # 3. Par de lineas paralelas abiertas con separacion proporcional segura (min 0.85 mm)
+    #    para evaluar kerf y halo termico sin cerrarse ni fusionarse por pre-ignicion
+    sep_paralelas_mm = round(max(0.85, 0.95 * s), 3)
+    y_par_inf = cy + 0.9 * s
+    y_par_sup = min(cy + 3.5 * s, y_par_inf + sep_paralelas_mm)
     trazos.append({
         "tipo": "paralela_inferior",
         "pre_aprox": None,
         "puntos": [
             [round(cx + 0.6 * s, 3), round(y_par_inf, 3)],
-            [round(cx + 3.8 * s, 3), round(y_par_inf, 3)]
+            [round(cx + 4.0 * s, 3), round(y_par_inf, 3)]
         ]
     })
     trazos.append({
-        "tipo": "paralela_superior_04mm",
+        "tipo": "paralela_superior",
         "pre_aprox": None,
         "puntos": [
             [round(cx + 0.6 * s, 3), round(y_par_sup, 3)],
-            [round(cx + 3.8 * s, 3), round(y_par_sup, 3)]
+            [round(cx + 4.0 * s, 3), round(y_par_sup, 3)]
         ]
     })
 
@@ -237,7 +240,8 @@ def generar_matriz_calibracion_4x4(preset_material, origen_x_mm, origen_y_mm, ta
             "alto": alto_total_mm,
             "celda_mm": round(celda_tam_mm, 2),
             "separacion_mm": round(gap_mm, 2),
-            "paso_mm": round(paso_mm, 2)
+            "paso_mm": round(paso_mm, 2),
+            "separacion_paralelas_mm": round(max(0.85, 0.95 * (celda_tam_mm / 8.5)), 2)
         },
         "celdas": celdas,
         "tabla_celdas": resumen_tabla

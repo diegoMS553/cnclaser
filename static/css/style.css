@@ -2365,6 +2365,24 @@ select:focus, .profile-text-input:focus { border-color: var(--accent-blue); }
     font-size: 9.5px;
 }
 
+.cal-origin-grid {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.cal-origin-grid .cal-size-inline input {
+    width: 52px;
+}
+
+.cal-origin-hint {
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    color: var(--text-dim);
+    margin-top: 2px;
+}
+
 .cal-actions-row {
     display: grid;
     grid-template-columns: 1fr 1fr;
