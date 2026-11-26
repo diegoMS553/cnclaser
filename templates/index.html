@@ -1891,6 +1891,18 @@
                                     </div>
                                 </div>
 
+                                <!-- Control directo de Curva S-Curve en Estudio de Dibujo -->
+                                <div class="laser-calibration-subbox" style="margin-bottom:8px;">
+                                    <div class="param-label-row">
+                                        <label class="inline-check" style="margin:0;">
+                                            <input type="checkbox" id="chk-draw-rampa-activa" checked onchange="alternarRampaDesdeEstudio(this.checked)">
+                                            <span>Rampa S-Curve (Acel./Freno)</span>
+                                        </label>
+                                        <button type="button" class="chip" onclick="abrirModal('modal-calibracion-ejes')" title="Ajustar aceleracion, frecuencia de inicio y pausa DIR">Ajustar...</button>
+                                    </div>
+                                    <small id="lbl-draw-rampa-resumen" style="font-family:var(--font-mono); font-size:10px; color:var(--text-dim);">Activa: 2400 Hz/s | Inicio 90 Hz | DIR 2500 us</small>
+                                </div>
+
                                 <div class="param-two-cols">
                                     <button type="button" class="btn-subtle" onclick="optimizarOrdenFigurasDibujo()" title="Reordena las figuras por vecino mas cercano para reducir viajes en vacio">
                                         Optimizar Orden
@@ -2263,6 +2275,45 @@
                         <li><b>&gt; 1200 Hz:</b> Alta velocidad; si escuchas vibracion o el motor pierde pasos, reduce los Hz o revisa la corriente (S4-S6).</li>
                         <li><b>Guardado:</b> Al presionar <b>Aplicar</b> se envia al controlador, recalcula el tiempo del diseno final y queda listo para guardar en tu perfil.</li>
                     </ul>
+                </div>
+
+                <div class="wiring-box" style="margin-top:8px;">
+                    <strong>Curvas Progresivas de Aceleracion y Desaceleracion S-Curve (ESP32):</strong>
+                    <label class="safety-toggle" style="margin:6px 0 8px 0;">
+                        <input type="checkbox" id="chk-config-rampa-activa" checked>
+                        <span class="safety-text">
+                            <strong>Activar Rampa S-Curve Anti-Perdida de Pasos</strong>
+                            <small>Suaviza arranques, frenados e inversiones DIR entre la mesa movil Y y el puente X.</small>
+                        </span>
+                    </label>
+                    <div class="param-three-cols">
+                        <div class="param-group">
+                            <label for="input-config-acel-hz-s">Aceleracion</label>
+                            <div class="num-input-group full">
+                                <input type="number" id="input-config-acel-hz-s" value="2400" min="200" max="25000" step="100">
+                                <span>Hz/s</span>
+                            </div>
+                        </div>
+                        <div class="param-group">
+                            <label for="input-config-vel-inicio-hz">Arranque/Freno Seguro</label>
+                            <div class="num-input-group full">
+                                <input type="number" id="input-config-vel-inicio-hz" value="90" min="30" max="400" step="5">
+                                <span>Hz</span>
+                            </div>
+                        </div>
+                        <div class="param-group">
+                            <label for="input-config-pausa-dir-us">Pausa Inversion DIR</label>
+                            <div class="num-input-group full">
+                                <input type="number" id="input-config-pausa-dir-us" value="2500" min="50" max="20000" step="100">
+                                <span>us</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="preset-pills" style="margin-top:6px;">
+                        <button type="button" class="chip" onclick="fijarPerfilRampaModal(1400, 80, 3000)">Suave (1400 Hz/s)</button>
+                        <button type="button" class="chip" onclick="fijarPerfilRampaModal(2400, 90, 2500)">NEMA 23 T8 (2400 Hz/s)</button>
+                        <button type="button" class="chip" onclick="fijarPerfilRampaModal(4200, 110, 1800)">Agil (4200 Hz/s)</button>
+                    </div>
                 </div>
 
                 <p class="modal-desc">Ejecuta la calibracion por microswitches de rodaja en X/Y o fija manualmente los limites del area de trabajo y la altura de contacto del Eje Z.</p>

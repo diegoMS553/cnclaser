@@ -674,7 +674,8 @@ async function moverEje(eje, dir_int, pasosPersonalizados = null, etiquetaAccion
     const destPredY = eje === "Y" ? estado.pos_y + pasos * signo : estado.pos_y;
     const destPredZ = eje === "Z" ? estado.pos_z + pasos * signo : estado.pos_z;
     const vHzEst = Math.max(50, Number(estado.velocidad_hz || 500));
-    const durPredMs = Math.max(16, (pasos / vHzEst) * 1000);
+    const perfilRampa = calcularPerfilRampaJS(pasos, vHzEst, true);
+    const durPredMs = Math.max(16, Math.round(perfilRampa.duracionSeg * 1000));
     const predData = {
         pos_x: destPredX,
         pos_y: destPredY,
@@ -684,6 +685,7 @@ async function moverEje(eje, dir_int, pasosPersonalizados = null, etiquetaAccion
             pasos,
             dir_int,
             duracion_ms: durPredMs,
+            perfil_rampa: perfilRampa,
             grados_giro: pasos * (estado.grados_por_pulso || 0.1125) * dirMotor
         }
     };
@@ -782,7 +784,8 @@ async function moverSimultaneoXY(destX, destY, etiquetaAccion = null, opcionesLa
     const distPred = (opcionesLaser && opcionesLaser.laser_activo && estado.laser?.compensacion_diagonal !== false)
         ? Math.hypot(dx, dy)
         : maxPasos;
-    const durPredMs = Math.max(16, (distPred / vHzEst) * 1000);
+    const perfilRampa = calcularPerfilRampaJS(distPred, vHzEst, true);
+    const durPredMs = Math.max(16, Math.round(perfilRampa.duracionSeg * 1000));
     const invX = Boolean(estado.invertir_dir && estado.invertir_dir.X);
     const invY = Boolean(estado.invertir_dir && estado.invertir_dir.Y);
     const predData = {
@@ -794,6 +797,7 @@ async function moverSimultaneoXY(destX, destY, etiquetaAccion = null, opcionesLa
             pasos: maxPasos,
             dir_int: 1,
             duracion_ms: durPredMs,
+            perfil_rampa: perfilRampa,
             grados_giro_x: dx * (estado.grados_por_pulso || 0.1125) * (invX ? -1 : 1),
             grados_giro_y: dy * (estado.grados_por_pulso || 0.1125) * (invY ? -1 : 1)
         }
@@ -868,6 +872,142 @@ function actualizarIndicadorEnaEnMovimiento(eje, activoEnGiro) {
     }
 }
 
+function calcularPerfilRampaJS(totalPasosRaw, velHzRaw, incluirPausaDir = false) {
+    const pasos = Math.max(0, Number(totalPasosRaw || 0));
+    const vMeta = Math.max(25, Number(velHzRaw || 500));
+    const r = estado.rampa_aceleracion || {};
+    const activa = r.activa !== false;
+
+    if (pasos <= 0) {
+        return { usarRampa: false, duracionSeg: 0, fracAcel: 0, fracDesacel: 0, ratioVelIni: 1, vPico: vMeta };
+    }
+    if (!activa || pasos < 4) {
+        return { usarRampa: false, duracionSeg: pasos / vMeta, fracAcel: 0, fracDesacel: 0, ratioVelIni: 1, vPico: vMeta };
+    }
+
+    const acel = Math.max(200, Math.min(25000, Number(r.aceleracion_hz_s ?? 2400)));
+    const vIniBase = Math.max(30, Math.min(400, Number(r.vel_inicio_hz ?? 90)));
+    const pausaDirSeg = incluirPausaDir
+        ? (Math.max(50, Math.min(20000, Number(r.pausa_cambio_dir_us ?? 2500))) / 1000000.0)
+        : 0;
+
+    const modoBaja = vMeta <= (vIniBase + 5);
+    let vIni = vIniBase;
+    let pasosIdeal = 0;
+
+    if (!modoBaja) {
+        pasosIdeal = Math.max(4, Math.ceil((vMeta * vMeta - vIni * vIni) / (2 * acel)));
+    } else {
+        vIni = Math.max(35, vMeta * 0.65);
+        if (vMeta <= vIni + 2) {
+            return { usarRampa: false, duracionSeg: pasos / vMeta + pausaDirSeg, fracAcel: 0, fracDesacel: 0, ratioVelIni: 1, vPico: vMeta };
+        }
+        pasosIdeal = Math.min(8, Math.floor(pasos / 2));
+    }
+
+    if (pasosIdeal < 2) {
+        return { usarRampa: false, duracionSeg: pasos / vMeta + pausaDirSeg, fracAcel: 0, fracDesacel: 0, ratioVelIni: 1, vPico: vMeta };
+    }
+
+    let pasosAcel = pasosIdeal;
+    let pasosDesacel = pasosIdeal;
+    let pasosCrucero = Math.max(0, pasos - 2 * pasosIdeal);
+    let vPico = vMeta;
+
+    if (pasos < 2 * pasosIdeal) {
+        pasosAcel = Math.floor(pasos / 2);
+        pasosDesacel = pasos - pasosAcel;
+        pasosCrucero = 0;
+        if (!modoBaja) {
+            vPico = Math.min(vMeta, Math.sqrt(vIni * vIni + 2 * acel * pasosAcel));
+        } else {
+            vPico = vIni + (vMeta - vIni) * Math.min(1, pasosAcel / Math.max(1, pasosIdeal));
+        }
+    }
+
+    const vMediaRampa = Math.max(25, 0.5 * (vIni + vPico));
+    const tAcel = pasosAcel / vMediaRampa;
+    const tCrucero = pasosCrucero / Math.max(25, vPico);
+    const tDesacel = pasosDesacel / vMediaRampa;
+    const tTotal = Math.max(0.001, tAcel + tCrucero + tDesacel);
+
+    return {
+        usarRampa: true,
+        duracionSeg: tTotal + pausaDirSeg,
+        fracAcel: tAcel / tTotal,
+        fracDesacel: tDesacel / tTotal,
+        distFracAcel: pasosAcel / pasos,
+        distFracCrucero: pasosCrucero / pasos,
+        distFracDesacel: pasosDesacel / pasos,
+        ratioVelIni: Math.max(0.08, Math.min(1, vIni / Math.max(1, vPico))),
+        vPico
+    };
+}
+
+function evaluarDesplazamientoSCurve(pRaw, perfil) {
+    const p = Math.max(0, Math.min(1, Number(pRaw || 0)));
+    if (!perfil || !perfil.usarRampa) {
+        return p;
+    }
+    const fa = Math.max(0, Math.min(0.5, perfil.fracAcel || 0));
+    const fd = Math.max(0, Math.min(0.5, perfil.fracDesacel || 0));
+    const fc = Math.max(0, 1 - fa - fd);
+    const da = perfil.distFracAcel || 0;
+    const dc = perfil.distFracCrucero || 0;
+    const dd = perfil.distFracDesacel || 0;
+    const r0 = perfil.ratioVelIni || 0.2;
+
+    // Integral normalizada de la curva de velocidad smoothstep: arranque y llegada suaves
+    if (fa > 1e-4 && p < fa) {
+        const u = p / fa;
+        const num = r0 * u + (1 - r0) * (u * u * u * (1 - 0.5 * u));
+        const den = r0 + (1 - r0) * 0.5;
+        return da * (num / den);
+    }
+    if (p <= fa + fc) {
+        const u = fc > 1e-4 ? (p - fa) / fc : 1;
+        return da + dc * u;
+    }
+    if (fd > 1e-4) {
+        const u = Math.min(1, (p - (fa + fc)) / fd);
+        const w = 1 - u;
+        const num = r0 * w + (1 - r0) * (w * w * w * (1 - 0.5 * w));
+        const den = r0 + (1 - r0) * 0.5;
+        return da + dc + dd * (1 - num / den);
+    }
+    return 1;
+}
+
+function actualizarBadgeRampaEstudio() {
+    const r = estado.rampa_aceleracion || {};
+    const activa = r.activa !== false;
+    const acel = r.aceleracion_hz_s ?? 2400;
+    const ini = r.vel_inicio_hz ?? 90;
+    const dirUs = r.pausa_cambio_dir_us ?? 2500;
+    const chk = document.getElementById("chk-draw-rampa-activa");
+    const lbl = document.getElementById("lbl-draw-rampa-resumen");
+    if (chk) chk.checked = activa;
+    if (lbl) {
+        lbl.textContent = activa
+            ? `Activa: ${acel} Hz/s | Inicio ${ini} Hz | DIR ${dirUs} us`
+            : "Desactivada (velocidad constante sin rampa)";
+    }
+}
+
+async function alternarRampaDesdeEstudio(activa) {
+    const r = estado.rampa_aceleracion || {};
+    await enviarAjustes({
+        rampa_aceleracion: {
+            activa: Boolean(activa),
+            aceleracion_hz_s: r.aceleracion_hz_s ?? 2400,
+            vel_inicio_hz: r.vel_inicio_hz ?? 90,
+            pausa_cambio_dir_us: r.pausa_cambio_dir_us ?? 2500
+        }
+    });
+    actualizarBadgeRampaEstudio();
+    actualizarEstadisticasDibujo();
+}
+
 function animarTransicionFisica(data, etiquetaAccion = null) {
     return new Promise((resolve) => {
         const inicioX = anim.x;
@@ -889,6 +1029,7 @@ function animarTransicionFisica(data, etiquetaAccion = null) {
         const deltaGradosY = mov.grados_giro_y !== undefined ? mov.grados_giro_y : deltaGrados;
 
         const duracionMs = Math.max(16, mov.duracion_ms || 120);
+        const perfilRampaAnim = mov.perfil_rampa || calcularPerfilRampaJS(mov.pasos || 0, mov.velocidad_hz || estado.velocidad_hz || 500, false);
         const t0 = performance.now();
 
         const boxProg = document.getElementById("motion-progress-box");
@@ -909,9 +1050,9 @@ function animarTransicionFisica(data, etiquetaAccion = null) {
                 ? 1
                 : Math.min(1, transcurrido / duracionMs);
 
-            const ease = dibujo.ejecutando
-                ? p
-                : (p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2);
+            const ease = perfilRampaAnim.usarRampa
+                ? evaluarDesplazamientoSCurve(p, perfilRampaAnim)
+                : (dibujo.ejecutando ? p : (p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2));
 
             anim.x = inicioX + (destX - inicioX) * ease;
             anim.y = inicioY + (destY - inicioY) * ease;
@@ -2427,21 +2568,43 @@ function estimarTrabajoTrazos(listaTrazos) {
     const usarZ = !esLaser && Boolean(document.getElementById("chk-draw-use-z")?.checked ?? estado.usar_z_dibujo);
     const zArriba = parseInt(document.getElementById("input-z-up")?.value ?? "0", 10) || 0;
     const zAbajo = parseInt(document.getElementById("input-z-down")?.value ?? "400", 10) || 0;
-    const SEG_MIN = 0.09;      // Duracion minima de cada movimiento (animacion / ESP32)
-    const SEG_COM = 0.03;      // Latencia aproximada de comunicacion por comando
+    const SEG_MIN = 0.04;      // Duracion minima de cada movimiento (animacion / ESP32)
+    const SEG_COM = 0.02;      // Latencia aproximada de comunicacion por comando
 
     let segmentos = 0, distTrazo = 0, distViaje = 0, segPorPasada = 0, cx = estado.pos_x / esc, cy = estado.pos_y / esc;
+    let prevDirX = 0, prevDirY = 0;
     listaTrazos.forEach(tr => {
         if (!tr || tr.length < 2) return;
-        const dV = Math.hypot(tr[0][0] - cx, tr[0][1] - cy);
+        const dvx = tr[0][0] - cx;
+        const dvy = tr[0][1] - cy;
+        const dV = Math.hypot(dvx, dvy);
         distViaje += dV;
-        segPorPasada += Math.max(SEG_MIN, (dV * esc) / vhzViaje) + SEG_COM;
-        if (usarZ) segPorPasada += 2 * (Math.max(SEG_MIN, Math.abs(zAbajo - zArriba) / vhzTrabajo) + SEG_COM);
+        const dirVX = dvx > 1e-4 ? 1 : (dvx < -1e-4 ? -1 : 0);
+        const dirVY = dvy > 1e-4 ? 1 : (dvy < -1e-4 ? -1 : 0);
+        const invV = (dirVX !== 0 && prevDirX !== 0 && dirVX !== prevDirX) || (dirVY !== 0 && prevDirY !== 0 && dirVY !== prevDirY);
+        if (dV > 1e-4) {
+            const pViaje = calcularPerfilRampaJS(dV * esc, vhzViaje, invV);
+            segPorPasada += Math.max(SEG_MIN, pViaje.duracionSeg) + SEG_COM;
+            if (dirVX !== 0) prevDirX = dirVX;
+            if (dirVY !== 0) prevDirY = dirVY;
+        }
+        if (usarZ) {
+            const pZ = calcularPerfilRampaJS(Math.abs(zAbajo - zArriba), vhzTrabajo, true);
+            segPorPasada += 2 * (Math.max(SEG_MIN, pZ.duracionSeg) + SEG_COM);
+        }
         for (let i = 1; i < tr.length; i++) {
-            const d = Math.hypot(tr[i][0] - tr[i - 1][0], tr[i][1] - tr[i - 1][1]);
+            const dtx = tr[i][0] - tr[i - 1][0];
+            const dty = tr[i][1] - tr[i - 1][1];
+            const d = Math.hypot(dtx, dty);
             segmentos++;
             distTrazo += d;
-            segPorPasada += Math.max(SEG_MIN, (d * esc) / vhzTrabajo) + SEG_COM;
+            const dirTX = dtx > 1e-4 ? 1 : (dtx < -1e-4 ? -1 : 0);
+            const dirTY = dty > 1e-4 ? 1 : (dty < -1e-4 ? -1 : 0);
+            const invT = (dirTX !== 0 && prevDirX !== 0 && dirTX !== prevDirX) || (dirTY !== 0 && prevDirY !== 0 && dirTY !== prevDirY);
+            const pSeg = calcularPerfilRampaJS(d * esc, vhzTrabajo, invT);
+            segPorPasada += Math.max(SEG_MIN, pSeg.duracionSeg) + SEG_COM;
+            if (dirTX !== 0) prevDirX = dirTX;
+            if (dirTY !== 0) prevDirY = dirTY;
         }
         cx = tr[tr.length - 1][0];
         cy = tr[tr.length - 1][1];
@@ -2486,13 +2649,16 @@ function actualizarEstadisticasDibujo() {
     }
     if (elTime) elTime.textContent = formatearDuracion(est.segundos);
     if (elSpd) {
+        const r = estado.rampa_aceleracion || {};
+        const tagRampa = (r.activa !== false) ? ` | S-Curve ${r.aceleracion_hz_s ?? 2400} Hz/s` : "";
         if (est.esLaser) {
             const ls = estado.laser || {};
-            elSpd.textContent = `Laser 5W: ${(ls.potencia_watts || 1.75).toFixed(2)}W (${(ls.potencia_pct || 35).toFixed(0)}%) | ${est.vhz}/${est.vhzViaje} Hz`;
+            elSpd.textContent = `Laser 5W: ${(ls.potencia_watts || 1.75).toFixed(2)}W (${(ls.potencia_pct || 35).toFixed(0)}%) | ${est.vhz}/${est.vhzViaje} Hz${tagRampa}`;
         } else {
-            elSpd.textContent = `A ${est.vhz} Hz (${est.pulsos} pulsos${est.usarZ ? `, ${est.levantamientos * 2} mov. Z` : ""})`;
+            elSpd.textContent = `A ${est.vhz} Hz (${est.pulsos} pulsos${est.usarZ ? `, ${est.levantamientos * 2} mov. Z` : ""})${tagRampa}`;
         }
     }
+    actualizarBadgeRampaEstudio();
 }
 
 async function irAPuntoXYPulsos(destX, destY, etiqueta, opcionesLaser = null) {
@@ -2921,10 +3087,14 @@ async function ejecutarDibujoEnMaquina() {
     if (boxDraw) boxDraw.classList.remove("hidden");
     actualizarProgresoDibujoUI(0, totalTramos, "Iniciando dibujo...", inicioEjecucionMs, true);
 
+    const rCfgDib = estado.rampa_aceleracion || {};
+    const infoRampaDib = (rCfgDib.activa !== false)
+        ? ` | Rampa S-Curve ${rCfgDib.aceleracion_hz_s ?? 2400} Hz/s (Inicio ${rCfgDib.vel_inicio_hz ?? 90} Hz)`
+        : " | Rampa S-Curve desactivada";
     const infoModoZ = usarZ
         ? `con Eje Z activo (Home Z=${zArriba}p levantado -> Maximo Z=${zAbajo}p contacto papel)`
         : "con Eje Z desactivado (Solo movimiento 2D X+Y)";
-    mostrarMensajeConsola(`Iniciando ejecucion de dibujo CNC ${infoModoZ}...`);
+    mostrarMensajeConsola(`Iniciando ejecucion de dibujo CNC ${infoModoZ}${infoRampaDib}...`);
 
     figurasLoop:
     for (let i = 0; i < dibujo.figuras.length; i++) {
@@ -4156,6 +4326,7 @@ function finalizarPanSiActivo() {
 // ==========================================================================
 function sincronizarEstado(data, forzarPosicionAnim = false) {
     estado = { ...estado, ...data };
+    actualizarBadgeRampaEstudio();
 
     if (forzarPosicionAnim) {
         anim.x = estado.pos_x;
@@ -6534,6 +6705,15 @@ function abrirModal(modalId) {
     if (modalId === "modal-calibracion-ejes") {
         const inVelCfg = document.getElementById("input-config-velocidad-hz");
         if (inVelCfg) inVelCfg.value = estado.velocidad_hz || 500;
+        const rCfg = estado.rampa_aceleracion || {};
+        const chkRampa = document.getElementById("chk-config-rampa-activa");
+        const inAcel = document.getElementById("input-config-acel-hz-s");
+        const inIni = document.getElementById("input-config-vel-inicio-hz");
+        const inPausaDir = document.getElementById("input-config-pausa-dir-us");
+        if (chkRampa) chkRampa.checked = rCfg.activa !== false;
+        if (inAcel) inAcel.value = rCfg.aceleracion_hz_s ?? 2400;
+        if (inIni) inIni.value = rCfg.vel_inicio_hz ?? 90;
+        if (inPausaDir) inPausaDir.value = rCfg.pausa_cambio_dir_us ?? 2500;
     }
     _modalSnapshot = capturarSnapshotModal(modalId);
 
@@ -6598,11 +6778,28 @@ async function aplicarModal(modalId) {
         }
     } else if (modalId === "modal-calibracion-ejes") {
         const inVelCfg = document.getElementById("input-config-velocidad-hz");
+        const chkRampa = document.getElementById("chk-config-rampa-activa");
+        const inAcel = document.getElementById("input-config-acel-hz-s");
+        const inIni = document.getElementById("input-config-vel-inicio-hz");
+        const inPausaDir = document.getElementById("input-config-pausa-dir-us");
+
+        const payloadAjustes = {};
         if (inVelCfg) {
             const nuevaVel = Math.max(50, Math.min(4000, parseInt(inVelCfg.value || "500", 10) || 500));
             const inVelMain = document.getElementById("input-velocidad-hz");
             if (inVelMain) inVelMain.value = nuevaVel;
-            await enviarAjustes({ velocidad_hz: nuevaVel });
+            payloadAjustes.velocidad_hz = nuevaVel;
+        }
+        if (chkRampa || inAcel || inIni || inPausaDir) {
+            payloadAjustes.rampa_aceleracion = {
+                activa: chkRampa ? Boolean(chkRampa.checked) : true,
+                aceleracion_hz_s: Math.max(200, Math.min(25000, parseInt(inAcel?.value || "2400", 10) || 2400)),
+                vel_inicio_hz: Math.max(30, Math.min(400, parseInt(inIni?.value || "90", 10) || 90)),
+                pausa_cambio_dir_us: Math.max(50, Math.min(20000, parseInt(inPausaDir?.value || "2500", 10) || 2500))
+            };
+        }
+        if (Object.keys(payloadAjustes).length > 0) {
+            await enviarAjustes(payloadAjustes);
             actualizarAvancePreview();
             actualizarEstadisticasDibujo();
         }
@@ -7307,6 +7504,17 @@ function optimizarOrdenFigurasDibujo() {
 function fijarVelocidadConfigModal(hz) {
     const inVelCfg = document.getElementById("input-config-velocidad-hz");
     if (inVelCfg) inVelCfg.value = hz;
+}
+
+function fijarPerfilRampaModal(acelHzS, velIniHz, pausaDirUs) {
+    const chkRampa = document.getElementById("chk-config-rampa-activa");
+    const inAcel = document.getElementById("input-config-acel-hz-s");
+    const inIni = document.getElementById("input-config-vel-inicio-hz");
+    const inPausaDir = document.getElementById("input-config-pausa-dir-us");
+    if (chkRampa) chkRampa.checked = true;
+    if (inAcel) inAcel.value = acelHzS;
+    if (inIni) inIni.value = velIniHz;
+    if (inPausaDir) inPausaDir.value = pausaDirUs;
 }
 
 function alternarModoHerramientaRapido() {

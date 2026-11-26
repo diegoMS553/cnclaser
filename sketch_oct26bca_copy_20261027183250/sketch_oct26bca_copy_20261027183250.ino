@@ -33,8 +33,27 @@
  *     - Protecciones        : Armado logico obligatorio (LASER,ARM,1), control manual directo
  *                             (LASER,PWR,<0..255>), corte automatico al terminar cada trazo
  *                             (Modo Dinamico M2L), corte por microswitches y watchdog de foco.
+ *  4. CURVAS DE ACELERACION Y DESACELERACION S-CURVE (SMOOTHSTEP C1):
+ *     - Rampa progresiva en dominio de frecuencia f(u) = f_ini + (f_pico - f_ini) * u^2 * (3 - 2u)
+ *     - Recorte triangular cinematico automatico en trazos cortos y amortiguacion al invertir DIR.
+ *     - Comando serial: "ACCEL,<activo0o1>,<acelHzS>,<hzInicio>,<pausaDirUs>" o "ACCEL,STATUS"
  * ============================================================================
  */
+
+#include <math.h>
+
+struct PerfilRampa {
+  bool usarRampa;
+  long pasosAcel;
+  long pasosDesacel;
+  float hzInicio;
+  float hzPico;
+  float hzMeta;
+};
+
+struct PerfilRampa calcularPerfilRampa(long totalPasos, int delayMetaUs);
+inline float calcularHzEnPaso(long pasoIdx, long totalPasos, const struct PerfilRampa &p);
+inline int calcularDelayPasoRampaUs(long pasoIdx, long totalPasos, const struct PerfilRampa &p, int delayFijoUs);
 
 // --- PINES EJE X (PUENTE FIJO) ---
 const int dirX  = 26;
@@ -94,6 +113,15 @@ bool enaActivoEnBajo = true;
 
 // Tiempo de pulso por defecto (1000 us HIGH + 1000 us LOW = 500 Hz)
 int delayPulsoUs = 1000;
+
+// --- CURVAS DE ACELERACION Y DESACELERACION PROGRESIVAS (S-CURVE ANTI-PERDIDA DE PASOS) ---
+bool  rampaActiva = true;
+float aceleracionHzPorSeg = 2400.0f; // Aceleracion nominal (Hz/s): 2400 Hz/s = 48 mm/s^2 a 50 P/mm
+int   hzInicioRampa = 90;            // Frecuencia segura de arranque/frenado (pull-in NEMA 23)
+int   pausaCambioDirUs = 2500;       // Pausa mecanica al invertir sentido DIR en placa movil/puente (us)
+int   ultimaDirX = -1;
+int   ultimaDirY = -1;
+int   ultimaDirZ = -1;
 
 // Estado de habilitacion de cada motor
 bool motorHabilitadoX = false;
@@ -199,6 +227,153 @@ bool finCarreraPresionadoDebounce(int pinEndstop) {
   return false;
 }
 
+// --- MOTOR DE RAMPAS S-CURVE (SMOOTHSTEP C1) Y AMORTIGUACION DE CAMBIO DE DIRECCION ---
+struct PerfilRampa calcularPerfilRampa(long totalPasos, int delayMetaUs) {
+  PerfilRampa p;
+  int delaySeguroUs = constrain(delayMetaUs, 40, 20000);
+  float hzMeta = 500000.0f / (float)delaySeguroUs;
+  p.hzMeta = hzMeta;
+
+  if (!rampaActiva || totalPasos < 4) {
+    p.usarRampa = false;
+    p.pasosAcel = 0;
+    p.pasosDesacel = 0;
+    p.hzInicio = hzMeta;
+    p.hzPico = hzMeta;
+    return p;
+  }
+
+  float acel = constrain(aceleracionHzPorSeg, 200.0f, 25000.0f);
+  float hzIniBase = (float)constrain(hzInicioRampa, 30, 400);
+  float hzIni = hzIniBase;
+  long pasosIdeal = 0;
+  bool modoBajaVelocidad = (hzMeta <= hzIniBase + 5.0f);
+
+  if (!modoBajaVelocidad) {
+    float num = (hzMeta * hzMeta) - (hzIni * hzIni);
+    pasosIdeal = max(4L, (long)ceilf(num / (2.0f * acel)));
+  } else {
+    hzIni = max(35.0f, hzMeta * 0.65f);
+    if (hzMeta <= hzIni + 2.0f) {
+      p.usarRampa = false;
+      p.pasosAcel = 0;
+      p.pasosDesacel = 0;
+      p.hzInicio = hzMeta;
+      p.hzPico = hzMeta;
+      return p;
+    }
+    pasosIdeal = min(8L, totalPasos / 2L);
+    if (pasosIdeal < 2) {
+      p.usarRampa = false;
+      p.pasosAcel = 0;
+      p.pasosDesacel = 0;
+      p.hzInicio = hzMeta;
+      p.hzPico = hzMeta;
+      return p;
+    }
+  }
+
+  float hzPico = hzMeta;
+  long pasosAcel = pasosIdeal;
+  long pasosDesacel = pasosIdeal;
+
+  if (totalPasos < (2L * pasosIdeal)) {
+    // Perfil triangular simetrico en trazos cortos con limite fisico de aceleracion
+    pasosAcel = totalPasos / 2L;
+    pasosDesacel = totalPasos - pasosAcel;
+    if (!modoBajaVelocidad) {
+      float picoCinem = sqrtf((hzIni * hzIni) + (2.0f * acel * (float)pasosAcel));
+      hzPico = min(hzMeta, picoCinem);
+    } else {
+      float fraccion = (float)pasosAcel / (float)max(1L, pasosIdeal);
+      hzPico = hzIni + (hzMeta - hzIni) * min(1.0f, fraccion);
+    }
+  }
+
+  if (pasosAcel < 2 || pasosDesacel < 2 || hzPico <= hzIni + 1.0f) {
+    p.usarRampa = false;
+    p.pasosAcel = 0;
+    p.pasosDesacel = 0;
+    p.hzInicio = hzMeta;
+    p.hzPico = hzMeta;
+    return p;
+  }
+
+  p.usarRampa = true;
+  p.pasosAcel = pasosAcel;
+  p.pasosDesacel = pasosDesacel;
+  p.hzInicio = hzIni;
+  p.hzPico = hzPico;
+  return p;
+}
+
+inline float calcularHzEnPaso(long pasoIdx, long totalPasos, const struct PerfilRampa &p) {
+  if (!p.usarRampa) {
+    return p.hzMeta;
+  }
+  if (pasoIdx < p.pasosAcel) {
+    float u = (float)pasoIdx / (float)max(1L, p.pasosAcel);
+    float s = u * u * (3.0f - 2.0f * u);
+    return p.hzInicio + (p.hzPico - p.hzInicio) * s;
+  }
+  long inicioDesacel = totalPasos - p.pasosDesacel;
+  if (pasoIdx >= inicioDesacel) {
+    long pasosRest = (totalPasos - 1L) - pasoIdx;
+    float u = (float)pasosRest / (float)max(1L, p.pasosDesacel);
+    float s = u * u * (3.0f - 2.0f * u);
+    return p.hzInicio + (p.hzPico - p.hzInicio) * s;
+  }
+  return p.hzPico;
+}
+
+inline int calcularDelayPasoRampaUs(long pasoIdx, long totalPasos, const struct PerfilRampa &p, int delayFijoUs) {
+  if (!p.usarRampa) {
+    return delayFijoUs;
+  }
+  float hz = calcularHzEnPaso(pasoIdx, totalPasos, p);
+  if (hz < 25.0f) hz = 25.0f;
+  int dUs = (int)(500000.0f / hz + 0.5f);
+  return constrain(dUs, max(40, delayFijoUs), 20000);
+}
+
+inline void esperarMicrosSeguro(int totalUs) {
+  if (totalUs <= 0) return;
+  if (totalUs >= 15000) {
+    delay(totalUs / 1000);
+    int remUs = totalUs % 1000;
+    if (remUs > 0) delayMicroseconds(remUs);
+  } else {
+    delayMicroseconds(totalUs);
+  }
+}
+
+void aplicarDireccionEjeConAmortiguacion(bool usarX, int dirXVal, bool usarY, int dirYVal, bool usarZ, int dirZVal) {
+  bool invirtioSentido = false;
+
+  if (usarX) {
+    if (ultimaDirX != -1 && dirXVal != ultimaDirX) invirtioSentido = true;
+    digitalWrite(dirX, dirXVal);
+    ultimaDirX = dirXVal;
+  }
+  if (usarY) {
+    if (ultimaDirY != -1 && dirYVal != ultimaDirY) invirtioSentido = true;
+    digitalWrite(dirY, dirYVal);
+    ultimaDirY = dirYVal;
+  }
+  if (usarZ) {
+    if (ultimaDirZ != -1 && dirZVal != ultimaDirZ) invirtioSentido = true;
+    digitalWrite(dirZ, dirZVal);
+    ultimaDirZ = dirZVal;
+  }
+
+  // Estabilidad minima para optoacopladores TB6600 / DM542
+  delayMicroseconds(25);
+
+  if (invirtioSentido && rampaActiva && pausaCambioDirUs > 0) {
+    esperarMicrosSeguro(constrain(pausaCambioDirUs, 50, 20000));
+  }
+}
+
 // --- AUTO-CALIBRACION DE UN EJE INDIVIDUAL HASTA TOCAR SU MICROSWITCH ---
 bool autocalibrarEjeIndividual(char eje, int dirHaciaSwitch, long maxPasos) {
   // Por seguridad, siempre apagar el laser antes de buscar los microswitches
@@ -208,16 +383,19 @@ bool autocalibrarEjeIndividual(char eje, int dirHaciaSwitch, long maxPasos) {
     return false; // Switch Z desactivado: el Eje Z se calibra manualmente
   }
 
-  int pinDir  = (eje == 'X') ? dirX  : (eje == 'Y') ? dirY  : dirZ;
   int pinStep = (eje == 'X') ? stepX : (eje == 'Y') ? stepY : stepZ;
   int pinSw   = (eje == 'X') ? endstopX : (eje == 'Y') ? endstopY : endstopZ;
 
   establecerEnableMotor(eje, true);
   delay(5);
 
-  // Fase 1: Avanzar hacia el microswitch hasta que la rodaja cierre el contacto
-  digitalWrite(pinDir, dirHaciaSwitch);
-  delayMicroseconds(15);
+  // Fase 1: Avanzar con arranque progresivo hacia el microswitch hasta cerrar contacto
+  aplicarDireccionEjeConAmortiguacion(eje == 'X', dirHaciaSwitch, eje == 'Y', dirHaciaSwitch, eje == 'Z', dirHaciaSwitch);
+
+  const long PASOS_ARRANQUE_HOME = 40;
+  int delayMetaHomeUs = max(delayPulsoUs, 600);
+  float hzMetaHome = 500000.0f / (float)delayMetaHomeUs;
+  float hzIniHome = min(hzMetaHome, (float)constrain(hzInicioRampa, 30, 400));
 
   bool detectado = false;
   for (long i = 0; i < maxPasos; i++) {
@@ -233,22 +411,32 @@ bool autocalibrarEjeIndividual(char eje, int dirHaciaSwitch, long maxPasos) {
         return false;
       }
     }
+    int dHomeUs = delayMetaHomeUs;
+    if (rampaActiva && i < PASOS_ARRANQUE_HOME && hzMetaHome > hzIniHome + 2.0f) {
+      float u = (float)i / (float)PASOS_ARRANQUE_HOME;
+      float s = u * u * (3.0f - 2.0f * u);
+      float hzAct = hzIniHome + (hzMetaHome - hzIniHome) * s;
+      dHomeUs = constrain((int)(500000.0f / max(25.0f, hzAct) + 0.5f), delayMetaHomeUs, 20000);
+    }
     digitalWrite(pinStep, HIGH);
-    delayMicroseconds(delayPulsoUs);
+    delayMicroseconds(dHomeUs);
     digitalWrite(pinStep, LOW);
-    delayMicroseconds(delayPulsoUs);
+    delayMicroseconds(dHomeUs);
   }
 
-  // Fase 2: Retroceder unos pasos en sentido opuesto para liberar la palanca/rodaja
+  // Fase 2: Pausa de frenado e inversion suave para liberar la palanca/rodaja
   if (detectado) {
+    delay(10);
     int dirOpuesta = (dirHaciaSwitch == 1) ? 0 : 1;
-    digitalWrite(pinDir, dirOpuesta);
-    delayMicroseconds(15);
+    aplicarDireccionEjeConAmortiguacion(eje == 'X', dirOpuesta, eje == 'Y', dirOpuesta, eje == 'Z', dirOpuesta);
+    int delayRetroUs = max(delayPulsoUs, 1000);
+    PerfilRampa rampaRet = calcularPerfilRampa(PASOS_RETROCESO_HOME, delayRetroUs);
     for (int r = 0; r < PASOS_RETROCESO_HOME; r++) {
+      int dRetUs = calcularDelayPasoRampaUs(r, PASOS_RETROCESO_HOME, rampaRet, delayRetroUs);
       digitalWrite(pinStep, HIGH);
-      delayMicroseconds(delayPulsoUs);
+      delayMicroseconds(dRetUs);
       digitalWrite(pinStep, LOW);
-      delayMicroseconds(delayPulsoUs);
+      delayMicroseconds(dRetUs);
     }
   }
 
@@ -269,17 +457,20 @@ void autocalibrarHomeCompleto(int dirHX, int dirHY, int dirHZ, bool reportarSeri
     okZ = autocalibrarEjeIndividual('Z', dirHZ, MAX_PASOS_HOME_Z);
   }
 
-  // Mover X e Y simultaneamente hacia la esquina inferior izquierda
+  // Mover X e Y simultaneamente hacia la esquina inferior izquierda con arranque suave
   establecerEnableMotor('X', true);
   establecerEnableMotor('Y', true);
   delay(5);
 
-  digitalWrite(dirX, dirHX);
-  digitalWrite(dirY, dirHY);
-  delayMicroseconds(15);
+  aplicarDireccionEjeConAmortiguacion(true, dirHX, true, dirHY, false, 0);
 
   bool xTocado = finCarreraPresionadoDebounce(endstopX);
   bool yTocado = finCarreraPresionadoDebounce(endstopY);
+
+  const long PASOS_ARRANQUE_HOME = 40;
+  int delayMetaHomeUs = max(delayPulsoUs, 600);
+  float hzMetaHome = 500000.0f / (float)delayMetaHomeUs;
+  float hzIniHome = min(hzMetaHome, (float)constrain(hzInicioRampa, 30, 400));
 
   for (long i = 0; i < MAX_PASOS_HOME_XY; i++) {
     if (!xTocado && finCarreraPresionadoDebounce(endstopX)) xTocado = true;
@@ -292,29 +483,39 @@ void autocalibrarHomeCompleto(int dirHX, int dirHY, int dirHZ, bool reportarSeri
       if (cmd.equalsIgnoreCase("STOP")) break;
     }
 
+    int dHomeUs = delayMetaHomeUs;
+    if (rampaActiva && i < PASOS_ARRANQUE_HOME && hzMetaHome > hzIniHome + 2.0f) {
+      float u = (float)i / (float)PASOS_ARRANQUE_HOME;
+      float s = u * u * (3.0f - 2.0f * u);
+      float hzAct = hzIniHome + (hzMetaHome - hzIniHome) * s;
+      dHomeUs = constrain((int)(500000.0f / max(25.0f, hzAct) + 0.5f), delayMetaHomeUs, 20000);
+    }
+
     if (!xTocado) digitalWrite(stepX, HIGH);
     if (!yTocado) digitalWrite(stepY, HIGH);
-    delayMicroseconds(delayPulsoUs);
+    delayMicroseconds(dHomeUs);
 
     if (!xTocado) digitalWrite(stepX, LOW);
     if (!yTocado) digitalWrite(stepY, LOW);
-    delayMicroseconds(delayPulsoUs);
+    delayMicroseconds(dHomeUs);
   }
 
-  // Liberar suavemente las rodajas de X e Y tras tocar los limites inferiores izquierdos
+  // Pausa de reposo e inversion suave para liberar las rodajas de X e Y
+  delay(10);
   int dirOpX = (dirHX == 1) ? 0 : 1;
   int dirOpY = (dirHY == 1) ? 0 : 1;
-  digitalWrite(dirX, dirOpX);
-  digitalWrite(dirY, dirOpY);
-  delayMicroseconds(15);
+  aplicarDireccionEjeConAmortiguacion(xTocado, dirOpX, yTocado, dirOpY, false, 0);
 
+  int delayRetroUs = max(delayPulsoUs, 1000);
+  PerfilRampa rampaRet = calcularPerfilRampa(PASOS_RETROCESO_HOME, delayRetroUs);
   for (int r = 0; r < PASOS_RETROCESO_HOME; r++) {
+    int dRetUs = calcularDelayPasoRampaUs(r, PASOS_RETROCESO_HOME, rampaRet, delayRetroUs);
     if (xTocado) digitalWrite(stepX, HIGH);
     if (yTocado) digitalWrite(stepY, HIGH);
-    delayMicroseconds(delayPulsoUs);
+    delayMicroseconds(dRetUs);
     if (xTocado) digitalWrite(stepX, LOW);
     if (yTocado) digitalWrite(stepY, LOW);
-    delayMicroseconds(delayPulsoUs);
+    delayMicroseconds(dRetUs);
   }
 
   posX = 0;
@@ -330,7 +531,7 @@ void autocalibrarHomeCompleto(int dirHX, int dirHY, int dirHZ, bool reportarSeri
   }
 }
 
-// --- MOVIMIENTO SIMULTANEO 2D (ALGORITMO DE BRESENHAM X + Y CON SOPORTE LASER DINAMICO) ---
+// --- MOVIMIENTO SIMULTANEO 2D (BRESENHAM X + Y CON RAMPAS S-CURVE Y MODULACION LASER) ---
 void moverSimultaneoXYLaser(long pasosX, int dirXVal, long pasosY, int dirYVal, int pwmSegmento, int delayUsPersonalizado, bool cortarLaserAlFinal) {
   long totalPasos = max(pasosX, pasosY);
   if (totalPasos <= 0) {
@@ -352,15 +553,15 @@ void moverSimultaneoXYLaser(long pasosX, int dirXVal, long pasosY, int dirYVal, 
     delay(5);
   }
 
-  if (pasosX > 0) digitalWrite(dirX, dirXVal);
-  if (pasosY > 0) digitalWrite(dirY, dirYVal);
-  delayMicroseconds(15);
-
-  // Si se solicito potencia de laser (pwmSegmento >= 0), ajustarla justo al iniciar el movimiento
-  if (pwmSegmento >= 0) {
-    laserEnModoFoco = false;
-    escribirPwmLaser(pwmSegmento);
+  // En desplazamientos en vacio (pwm == 0), garantizar laser en 0W antes de invertir sentido
+  if (pwmSegmento == 0) {
+    apagarLaserInmediato();
   }
+
+  // Configurar pines DIR con espera de establecimiento y amortiguacion ante inversion de sentido
+  aplicarDireccionEjeConAmortiguacion(pasosX > 0, dirXVal, pasosY > 0, dirYVal, false, 0);
+
+  PerfilRampa rampa = calcularPerfilRampa(totalPasos, delayActivoUs);
 
   long errX = 0;
   long errY = 0;
@@ -368,7 +569,7 @@ void moverSimultaneoXYLaser(long pasosX, int dirXVal, long pasosY, int dirYVal, 
   long ejecutadosY = 0;
 
   for (long i = 0; i < totalPasos; i++) {
-    // Proteccion por microswitch activa solo si hardLimitsEnMovimiento es true (evita bloqueos por ruido EMI durante grabado)
+    // Proteccion por microswitch activa solo si hardLimitsEnMovimiento es true
     bool xBloqueado = false;
     bool yBloqueado = false;
     if (hardLimitsEnMovimiento) {
@@ -406,17 +607,32 @@ void moverSimultaneoXYLaser(long pasosX, int dirXVal, long pasosY, int dirYVal, 
       break;
     }
 
+    float hzActual = rampa.usarRampa ? calcularHzEnPaso(i, totalPasos, rampa) : rampa.hzMeta;
+    int delayPasoUs = rampa.usarRampa ? calcularDelayPasoRampaUs(i, totalPasos, rampa, delayActivoUs) : delayActivoUs;
+
+    if (pwmSegmento > 0) {
+      int pwmObjetivo = pwmSegmento;
+      if (rampa.usarRampa && rampa.hzMeta > 1.0f && hzActual < (rampa.hzMeta * 0.985f)) {
+        int pwmMinRampa = max(1, (int)(pwmSegmento * 0.55f + 0.5f));
+        int pwmEsc = (int)(pwmSegmento * (hzActual / rampa.hzMeta) + 0.5f);
+        pwmObjetivo = constrain(pwmEsc, pwmMinRampa, pwmSegmento);
+      }
+      if (pwmObjetivo != laserPwmActual || laserEnModoFoco) {
+        laserEnModoFoco = false;
+        escribirPwmLaser(pwmObjetivo);
+      }
+    }
+
     if (pulsoX) digitalWrite(stepX, HIGH);
     if (pulsoY) digitalWrite(stepY, HIGH);
-    delayMicroseconds(delayActivoUs);
+    delayMicroseconds(delayPasoUs);
 
     if (pulsoX) digitalWrite(stepX, LOW);
     if (pulsoY) digitalWrite(stepY, LOW);
-    delayMicroseconds(delayActivoUs);
+    delayMicroseconds(delayPasoUs);
   }
 
-  // Modo dinamico seguro (tipo M4 de LaserGRBL): apaga el haz al terminar el segmento
-  // para evitar quemaduras en las esquinas mientras llega el siguiente comando serial
+  // Modo dinamico seguro: apaga el haz al terminar el segmento para evitar quemaduras en esquinas
   if (cortarLaserAlFinal) {
     apagarLaserInmediato();
   }
@@ -430,6 +646,50 @@ void moverSimultaneoXYLaser(long pasosX, int dirXVal, long pasosY, int dirYVal, 
 
 void moverSimultaneoXY(long pasosX, int dirXVal, long pasosY, int dirYVal) {
   moverSimultaneoXYLaser(pasosX, dirXVal, pasosY, dirYVal, -1, delayPulsoUs, false);
+}
+
+// --- MOVIMIENTO INDIVIDUAL DE UN EJE CON RAMPAS S-CURVE Y AMORTIGUACION DE DIRECCION ---
+void moverEjeIndividualConRampa(char eje, long pasos, int dir) {
+  if (pasos <= 0) return;
+
+  int pinStepAUsar = (eje == 'X') ? stepX : (eje == 'Y') ? stepY : stepZ;
+  int pinSwAUsar   = (eje == 'X') ? endstopX : (eje == 'Y') ? endstopY : endstopZ;
+  int dirHomeEje   = (eje == 'X') ? dirFisicaHomeX : (eje == 'Y') ? dirFisicaHomeY : dirFisicaHomeZ;
+  bool yaEstabaHabilitado = (eje == 'X') ? motorHabilitadoX : (eje == 'Y') ? motorHabilitadoY : motorHabilitadoZ;
+
+  establecerEnableMotor(eje, true);
+  if (!yaEstabaHabilitado) {
+    delay(5);
+  }
+
+  aplicarDireccionEjeConAmortiguacion(eje == 'X', dir, eje == 'Y', dir, eje == 'Z', dir);
+
+  PerfilRampa rampa = calcularPerfilRampa(pasos, delayPulsoUs);
+  long pasosEjecutados = 0;
+  bool tieneSwitchActivo = hardLimitsEnMovimiento && ((eje == 'X') || (eje == 'Y') || (eje == 'Z' && endstopZHabilitado));
+
+  for (long i = 0; i < pasos; i++) {
+    if (tieneSwitchActivo && dir == dirHomeEje && finCarreraPresionado(pinSwAUsar)) {
+      if (eje == 'X') posX = 0;
+      else if (eje == 'Y') posY = 0;
+      else if (eje == 'Z') posZ = 0;
+      apagarLaserInmediato();
+      break;
+    }
+    int delayPasoUs = rampa.usarRampa ? calcularDelayPasoRampaUs(i, pasos, rampa, delayPulsoUs) : delayPulsoUs;
+    digitalWrite(pinStepAUsar, HIGH);
+    delayMicroseconds(delayPasoUs);
+    digitalWrite(pinStepAUsar, LOW);
+    delayMicroseconds(delayPasoUs);
+    pasosEjecutados++;
+  }
+
+  long signo = (dir == 1) ? 1 : -1;
+  if (eje == 'X') posX += (pasosEjecutados * signo);
+  else if (eje == 'Y') posY += (pasosEjecutados * signo);
+  else if (eje == 'Z') posZ += (pasosEjecutados * signo);
+
+  ultimoMovimientoMs = millis();
 }
 
 void setup() {
@@ -507,6 +767,8 @@ void loop() {
       Serial.print(",LSR:");  Serial.print(laserPwmActual);
       Serial.print(",ARM:");  Serial.print(laserArmado ? 1 : 0);
       Serial.print(",HL:");   Serial.print(hardLimitsEnMovimiento ? 1 : 0);
+      Serial.print(",ACC:");  Serial.print(rampaActiva ? 1 : 0);
+      Serial.print(",ACLHZ:"); Serial.print((long)aceleracionHzPorSeg);
       Serial.println(",B2D:1");
       return;
     }
@@ -655,6 +917,41 @@ void loop() {
       return;
     }
 
+    // 6.5. Configuracion de curva de aceleracion S-Curve en ESP32:
+    //      "ACCEL,<activo0o1>,<acelHzS>,<hzInicio>,<pausaDirUs>" o "ACCEL,STATUS"
+    if (comando.startsWith("ACCEL,")) {
+      String resto = comando.substring(6);
+      resto.trim();
+      if (resto.equalsIgnoreCase("STATUS")) {
+        Serial.print("OK,ACCEL:"); Serial.print(rampaActiva ? 1 : 0);
+        Serial.print(",ACLHZ:"); Serial.print((long)aceleracionHzPorSeg);
+        Serial.print(",INI:");   Serial.print(hzInicioRampa);
+        Serial.print(",DIRUS:"); Serial.println(pausaCambioDirUs);
+        return;
+      }
+      int c1 = comando.indexOf(',');
+      int c2 = comando.indexOf(',', c1 + 1);
+      int c3 = comando.indexOf(',', c2 + 1);
+      int c4 = comando.indexOf(',', c3 + 1);
+      if (c1 > 0 && c2 > c1 && c3 > c2 && c4 > c3) {
+        int actVal   = comando.substring(c1 + 1, c2).toInt();
+        float aclVal = comando.substring(c2 + 1, c3).toFloat();
+        int iniVal   = comando.substring(c3 + 1, c4).toInt();
+        int dirUsVal = comando.substring(c4 + 1).toInt();
+
+        rampaActiva = (actVal != 0);
+        aceleracionHzPorSeg = constrain(aclVal, 200.0f, 25000.0f);
+        hzInicioRampa = constrain(iniVal, 30, 400);
+        pausaCambioDirUs = constrain(dirUsVal, 50, 20000);
+
+        Serial.print("OK,ACCEL:"); Serial.print(rampaActiva ? 1 : 0);
+        Serial.print(",ACLHZ:"); Serial.print((long)aceleracionHzPorSeg);
+        Serial.print(",INI:");   Serial.print(hzInicioRampa);
+        Serial.print(",DIRUS:"); Serial.println(pausaCambioDirUs);
+        return;
+      }
+    }
+
     // 7. Comandos ENA: "ENA,POL,LOW", "ENA,POL,HIGH", "ENA,MODE,AUTO", "ENA,MODE,HOLD", "ENA,ALL,0"
     if (comando.startsWith("ENA,")) {
       int c1 = comando.indexOf(',');
@@ -740,53 +1037,18 @@ void loop() {
       }
     }
 
-    // 10. Comando de movimiento individual: "EJE,PASOS,DIR" (ej. "X,100,1")
+    // 10. Comando de movimiento individual con rampas S-Curve: "EJE,PASOS,DIR" (ej. "X,100,1")
     int primeraComa = comando.indexOf(',');
     int segundaComa = comando.lastIndexOf(',');
 
     if (primeraComa > 0 && segundaComa > primeraComa) {
       char eje = toupper(comando.charAt(0));
-      int pasos = comando.substring(primeraComa + 1, segundaComa).toInt();
+      long pasos = comando.substring(primeraComa + 1, segundaComa).toInt();
       int dir = comando.substring(segundaComa + 1).toInt();
 
-      int pinDirAUsar  = (eje == 'X') ? dirX  : (eje == 'Y') ? dirY  : dirZ;
-      int pinStepAUsar = (eje == 'X') ? stepX : (eje == 'Y') ? stepY : stepZ;
-      int pinSwAUsar   = (eje == 'X') ? endstopX : (eje == 'Y') ? endstopY : endstopZ;
-      int dirHomeEje   = (eje == 'X') ? dirFisicaHomeX : (eje == 'Y') ? dirFisicaHomeY : dirFisicaHomeZ;
-      bool yaEstabaHabilitado = (eje == 'X') ? motorHabilitadoX : (eje == 'Y') ? motorHabilitadoY : motorHabilitadoZ;
-
-      establecerEnableMotor(eje, true);
-      if (!yaEstabaHabilitado) {
-        delay(5);
+      if ((eje == 'X' || eje == 'Y' || eje == 'Z') && pasos > 0) {
+        moverEjeIndividualConRampa(eje, pasos, dir);
       }
-
-      digitalWrite(pinDirAUsar, dir);
-      delayMicroseconds(10);
-
-      long pasosEjecutados = 0;
-      bool tieneSwitchActivo = hardLimitsEnMovimiento && ((eje == 'X') || (eje == 'Y') || (eje == 'Z' && endstopZHabilitado));
-      for (int i = 0; i < pasos; i++) {
-        // Si el eje tiene microswitch habilitado y avanza hacia el limite, detiene el eje y fija 0
-        if (tieneSwitchActivo && dir == dirHomeEje && finCarreraPresionado(pinSwAUsar)) {
-          if (eje == 'X') posX = 0;
-          else if (eje == 'Y') posY = 0;
-          else if (eje == 'Z') posZ = 0;
-          apagarLaserInmediato();
-          break;
-        }
-        digitalWrite(pinStepAUsar, HIGH);
-        delayMicroseconds(delayPulsoUs);
-        digitalWrite(pinStepAUsar, LOW);
-        delayMicroseconds(delayPulsoUs);
-        pasosEjecutados++;
-      }
-
-      long signo = (dir == 1) ? 1 : -1;
-      if (eje == 'X') posX += (pasosEjecutados * signo);
-      else if (eje == 'Y') posY += (pasosEjecutados * signo);
-      else if (eje == 'Z') posZ += (pasosEjecutados * signo);
-
-      ultimoMovimientoMs = millis();
       Serial.println("OK");
     }
   }

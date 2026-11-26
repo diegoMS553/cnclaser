@@ -467,6 +467,12 @@ estado_maquina = {
         "motor_tipo": "NEMA 23 (200 pasos/rev)"
     },
     "bloquear_limites": False,
+    "rampa_aceleracion": {
+        "activa": True,
+        "aceleracion_hz_s": 2400,
+        "vel_inicio_hz": 90,
+        "pausa_cambio_dir_us": 2500
+    },
     "modo_simulacion": True,
     "puerto": PUERTO_DEFECTO,
     "baud_rate": BAUD_RATE,
@@ -475,6 +481,102 @@ estado_maquina = {
     "ultimo_mensaje": "Control ENA+/ENA- activo en modo AUTO: Los motores bajan a 0.0 A cuando están en reposo.",
     "historial": [[0, 0]]
 }
+
+
+def actualizar_config_rampa_maquina(datos_rampa=None, sincronizar=True):
+    """Normaliza y actualiza los parametros de la curva de aceleracion S-Curve."""
+    base = estado_maquina.setdefault("rampa_aceleracion", {
+        "activa": True,
+        "aceleracion_hz_s": 2400,
+        "vel_inicio_hz": 90,
+        "pausa_cambio_dir_us": 2500
+    })
+    src = datos_rampa if isinstance(datos_rampa, dict) else {}
+
+    if "activa" in src:
+        base["activa"] = bool(src["activa"])
+    if "aceleracion_hz_s" in src:
+        try:
+            base["aceleracion_hz_s"] = max(200, min(25000, int(round(float(src["aceleracion_hz_s"])))))
+        except (ValueError, TypeError):
+            pass
+    if "vel_inicio_hz" in src:
+        try:
+            base["vel_inicio_hz"] = max(30, min(400, int(round(float(src["vel_inicio_hz"])))))
+        except (ValueError, TypeError):
+            pass
+    if "pausa_cambio_dir_us" in src:
+        try:
+            base["pausa_cambio_dir_us"] = max(50, min(20000, int(round(float(src["pausa_cambio_dir_us"])))))
+        except (ValueError, TypeError):
+            pass
+
+    if sincronizar:
+        sincronizar_rampa_esp32()
+    return dict(base)
+
+
+def sincronizar_rampa_esp32():
+    """Envia los parametros activos de rampa S-Curve al controlador ESP32."""
+    r = estado_maquina.get("rampa_aceleracion", {})
+    act = 1 if r.get("activa", True) else 0
+    acel = max(200, min(25000, int(r.get("aceleracion_hz_s", 2400))))
+    vel_ini = max(30, min(400, int(r.get("vel_inicio_hz", 90))))
+    pausa_dir = max(50, min(20000, int(r.get("pausa_cambio_dir_us", 2500))))
+    return enviar_comando_raw_serial(f"ACCEL,{act},{acel},{vel_ini},{pausa_dir}")
+
+
+def calcular_duracion_rampa_seg(total_pasos, vel_hz, incluir_pausa_dir=False):
+    """
+    Calcula la duracion cinematica real (en segundos) de un desplazamiento de
+    total_pasos a velocidad objetivo vel_hz replicando el perfil S-Curve del ESP32.
+    """
+    pasos = max(0.0, float(total_pasos))
+    v_meta = max(25.0, float(vel_hz))
+    if pasos <= 0.0:
+        return 0.0
+
+    r = estado_maquina.get("rampa_aceleracion", {})
+    activa = bool(r.get("activa", True))
+    if not activa or pasos < 4.0:
+        return round(pasos / v_meta, 3)
+
+    acel = max(200.0, min(25000.0, float(r.get("aceleracion_hz_s", 2400))))
+    v_ini_base = max(30.0, min(400.0, float(r.get("vel_inicio_hz", 90))))
+    pausa_dir_s = (max(50, min(20000, int(r.get("pausa_cambio_dir_us", 2500)))) / 1000000.0) if incluir_pausa_dir else 0.0
+
+    modo_baja = v_meta <= (v_ini_base + 5.0)
+    if not modo_baja:
+        v_ini = v_ini_base
+        pasos_ideal = max(4.0, math.ceil((v_meta * v_meta - v_ini * v_ini) / (2.0 * acel)))
+    else:
+        v_ini = max(35.0, v_meta * 0.65)
+        if v_meta <= v_ini + 2.0:
+            return round(pasos / v_meta + pausa_dir_s, 3)
+        pasos_ideal = min(8.0, math.floor(pasos / 2.0))
+
+    if pasos_ideal < 2.0:
+        return round(pasos / v_meta + pausa_dir_s, 3)
+
+    if pasos < 2.0 * pasos_ideal:
+        pasos_acel = math.floor(pasos / 2.0)
+        pasos_desacel = pasos - pasos_acel
+        pasos_crucero = 0.0
+        if not modo_baja:
+            v_pico = min(v_meta, math.sqrt(v_ini * v_ini + 2.0 * acel * pasos_acel))
+        else:
+            v_pico = v_ini + (v_meta - v_ini) * min(1.0, pasos_acel / max(1.0, pasos_ideal))
+    else:
+        pasos_acel = pasos_ideal
+        pasos_desacel = pasos_ideal
+        pasos_crucero = pasos - (pasos_acel + pasos_desacel)
+        v_pico = v_meta
+
+    # Velocidad media efectiva en rampa S-curve smoothstep (media armonica-aritmetica aproximada)
+    v_media_rampa = max(25.0, 0.5 * (v_ini + v_pico))
+    t_rampa = (pasos_acel + pasos_desacel) / v_media_rampa
+    t_crucero = pasos_crucero / max(25.0, v_pico)
+    return round(t_rampa + t_crucero + pausa_dir_s, 3)
 
 
 def recalcular_metricas_laser():
@@ -626,6 +728,7 @@ def construir_objeto_perfil(id_perfil, nombre_perfil, descripcion=""):
         "intercambiar_xy": bool(estado_maquina.get("intercambiar_xy", False)),
         "hard_limits_activos": bool(estado_maquina.get("hard_limits_activos", False)),
         "velocidad_hz": int(estado_maquina["velocidad_hz"]),
+        "rampa_aceleracion": dict(estado_maquina.get("rampa_aceleracion", {})),
         "pasos_por_mm": float(estado_maquina["pasos_por_mm"]),
         "mm_por_rev": float(estado_maquina["mm_por_rev"]),
         "estructura_fisica": dict(estado_maquina.get("estructura_fisica", {})),
@@ -786,6 +889,11 @@ def aplicar_datos_perfil_a_maquina(datos):
         nuevo_puerto = str(datos["puerto"]).strip()
         if nuevo_puerto != estado_maquina["puerto"] or not estado_maquina["conectado"]:
             intentar_conexion_serial(nuevo_puerto, silencioso=True)
+
+    if "rampa_aceleracion" in datos and isinstance(datos["rampa_aceleracion"], dict):
+        actualizar_config_rampa_maquina(datos["rampa_aceleracion"], sincronizar=True)
+    else:
+        sincronizar_rampa_esp32()
 
     if estado_maquina["pos_x"] < 0:
         estado_maquina["pos_x"] = 0
@@ -1030,7 +1138,6 @@ def intentar_conexion_serial(puerto, silencioso=False):
             estado_maquina["firmware_b2d"] = True
             estado_maquina["error_puerto"] = None
             estado_maquina["ultimo_mensaje"] = f"Conectado exitosamente a {puerto} ({BAUD_RATE} baudios)"
-            return True, estado_maquina["ultimo_mensaje"]
         except Exception as e:
             puerto_serial = None
             estado_maquina["conectado"] = False
@@ -1040,6 +1147,9 @@ def intentar_conexion_serial(puerto, silencioso=False):
                 estado_maquina["error_puerto"] = f"No se detectó hardware en {puerto}. Se activó protección en Modo Simulación."
             estado_maquina["ultimo_mensaje"] = f"Puerto {puerto} no disponible. Modo Simulación Virtual activo."
             return False, str(e)
+    enviar_comando_raw_serial(f"SPEED,{estado_maquina['velocidad_hz']}")
+    sincronizar_rampa_esp32()
+    return True, estado_maquina["ultimo_mensaje"]
 
 
 def enviar_por_serial(eje, pasos, dir_int, duracion_esperada):
@@ -1070,7 +1180,7 @@ def enviar_por_serial(eje, pasos, dir_int, duracion_esperada):
             puerto_serial.reset_input_buffer()
             puerto_serial.write(comando.encode("utf-8"))
 
-            timeout_max = max(5.0, duracion_esperada * 10)
+            timeout_max = max(5.0, duracion_esperada * 10) + 2.0
             inicio = time.time()
             while time.time() - inicio < timeout_max:
                 if puerto_serial.in_waiting > 0:
@@ -1213,7 +1323,7 @@ def enviar_interpolacion_xy_serial(
     with serial_lock:
         try:
             duracion_real_seg = (max(px_fis, py_fis) * 2.0 * delay_us) / 1000000.0
-            timeout_max = max(6.0, duracion_esperada * 12, duracion_real_seg * 4.0 + 5.0)
+            timeout_max = max(6.0, duracion_esperada * 12, duracion_real_seg * 4.0 + 5.0) + 2.0
             if usar_modo_laser:
                 # Pre-ignicion (dwell) para superar la zona muerta optica/termica al iniciar un trazo
                 if ign_ms > 0:
@@ -1838,8 +1948,8 @@ def api_move():
                         return jsonify(construir_respuesta_estado(ok=False, error=msg))
 
     vel_hz = max(50, int(estado_maquina.get("velocidad_hz", 1000)))
-    duracion_seg = round(pasos / float(vel_hz), 3)
-    duracion_anim_ms = int(max(120, min(15000, duracion_seg * 1000)))
+    duracion_seg = calcular_duracion_rampa_seg(pasos, vel_hz, incluir_pausa_dir=True)
+    duracion_anim_ms = int(max(60, min(20000, duracion_seg * 1000)))
 
     exito_serial, msg_serial = enviar_por_serial(eje, pasos, dir_int, duracion_seg)
     if not exito_serial:
@@ -2030,9 +2140,9 @@ def api_move_xy():
     pasos_dominantes = max(pasos_x, pasos_y)
     if pwm_laser is not None and pwm_laser > 0 and lsr.get("compensacion_diagonal", True):
         dist_euc = math.hypot(pasos_x, pasos_y)
-        duracion_seg = round(dist_euc / float(vel_hz), 3)
+        duracion_seg = calcular_duracion_rampa_seg(dist_euc, vel_hz, incluir_pausa_dir=True)
     else:
-        duracion_seg = round(pasos_dominantes / float(vel_hz), 3)
+        duracion_seg = calcular_duracion_rampa_seg(pasos_dominantes, vel_hz, incluir_pausa_dir=True)
     duracion_anim_ms = int(max(40, min(25000, duracion_seg * 1000)))
 
     pre_ign = bool(data.get("pre_ignicion", False))
@@ -2344,6 +2454,21 @@ def api_calibrate():
                 enviar_comando_raw_serial(f"SPEED,{estado_maquina['velocidad_hz']}")
             except ValueError:
                 pass
+        rampa_upd = {}
+        if isinstance(data.get("rampa_aceleracion"), dict):
+            rampa_upd.update(data["rampa_aceleracion"])
+        if "rampa_activa" in data:
+            rampa_upd["activa"] = data["rampa_activa"]
+        for k_r in ("aceleracion_hz_s", "vel_inicio_hz", "pausa_cambio_dir_us"):
+            if k_r in data:
+                rampa_upd[k_r] = data[k_r]
+        if rampa_upd:
+            r_act = actualizar_config_rampa_maquina(rampa_upd, sincronizar=True)
+            estado_maquina["ultimo_mensaje"] = (
+                f"Curva S-Curve ESP32: {'ACTIVA' if r_act['activa'] else 'INACTIVA'} | "
+                f"Acel: {r_act['aceleracion_hz_s']} Hz/s | Inicio: {r_act['vel_inicio_hz']} Hz | "
+                f"Pausa DIR: {r_act['pausa_cambio_dir_us']} us"
+            )
         if "bloquear_limites" in data:
             estado_maquina["bloquear_limites"] = bool(data["bloquear_limites"])
         if "autocalibrar_inicio" in data:
